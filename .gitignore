@@ -1,5 +1,5 @@
 configuration.yaml
-# threads.yaml
+threads.yaml
 same_as_expression.lua
 udf_aggregation.lua
 
