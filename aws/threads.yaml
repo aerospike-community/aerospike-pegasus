@@ -1,0 +1,14 @@
+write: 30
+read: 5
+update: 0
+delete: 0
+expressionRead: 0
+expressionWrite: 0
+batchWrite: 0
+batchRead: 0
+numericSearch: 0
+stringSearch: 0
+geospatialSearch: 0
+udf: 0
+udfAggregation: 0
+rangeQuery: 0

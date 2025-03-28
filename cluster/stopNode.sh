@@ -1,0 +1,1 @@
+aerolab aerospike stop -n ${CLUSTER_NAME} -l $1
