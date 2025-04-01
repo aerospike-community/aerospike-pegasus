@@ -1,9 +1,9 @@
-# 🚀 Pegasus
+# 🐎 Pegasus
 Pegasus is an orchestration and automation tool designed to simplify large-scale testing of Aerospike. While it can be used independently to deploy Aerospike clusters of any size on AWS, Pegasus also integrates seamlessly with [Aerospike-Perseus](https://github.com/aerospike-community/aerospike-perseus)—a powerful and flexible benchmarking engine. Together, they provide everything needed to launch, monitor, and manage complete test environments with ease. From provisioning clusters and configuring Grafana dashboards to running complex workloads, Pegasus takes care of the heavy lifting so you can focus on insights and results.
 
 Pegasus is named after the winged horse of Greek mythology, born from the blood of Medusa and later ridden by the hero Perseus. In the same spirit, Aerospike-Pegasus gives Perseus the wings to operate at scale. Together, they form a complete testing framework—Perseus provides the benchmark power, while Pegasus enables agility, automation, and cloud-scale orchestration.
 
-# Introduction
+# 🚀 Introduction
 Pegasus is a command-line tool designed for running Proof of Technology (PoT) workloads with [Aerospike](https://aerospike.com/). It simplifies the process of deploying, configuring, and benchmarking Aerospike clusters at scale. Pegasus leverages [AeroLab](https://github.com/aerospike/aerolab) under its hood.
 
 With Pegasus, you can easily:
