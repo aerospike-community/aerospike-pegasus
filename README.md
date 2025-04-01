@@ -1,5 +1,10 @@
 # 🚀 Pegasus
-Pegasus is a command-line tool designed for running Proof of Technology (PoT) workloads with [Aerospike](https://aerospike.com/). It simplifies the process of deploying, configuring, and benchmarking Aerospike clusters at scale using [AeroLab](https://github.com/aerospike/aerolab) and [Perseus](https://github.com/aerospike/perseus).
+Pegasus is an orchestration and automation tool designed to simplify large-scale testing of Aerospike. While it can be used independently to deploy Aerospike clusters of any size on AWS, Pegasus also integrates seamlessly with [Aerospike-Perseus](https://github.com/aerospike-community/aerospike-perseus)—a powerful and flexible benchmarking engine. Together, they provide everything needed to launch, monitor, and manage complete test environments with ease. From provisioning clusters and configuring Grafana dashboards to running complex workloads, Pegasus takes care of the heavy lifting so you can focus on insights and results.
+
+Pegasus is named after the winged horse of Greek mythology, born from the blood of Medusa and later ridden by the hero Perseus. In the same spirit, Aerospike-Pegasus gives Perseus the wings to operate at scale. Together, they form a complete testing framework—Perseus provides the benchmark power, while Pegasus enables agility, automation, and cloud-scale orchestration.
+
+# Introduction
+Pegasus is a command-line tool designed for running Proof of Technology (PoT) workloads with [Aerospike](https://aerospike.com/). It simplifies the process of deploying, configuring, and benchmarking Aerospike clusters at scale. Pegasus leverages [AeroLab](https://github.com/aerospike/aerolab) under its hood.
 
 With Pegasus, you can easily:
 - ✅ Launch an Aerospike cluster of any size on AWS
@@ -8,6 +13,10 @@ With Pegasus, you can easily:
 - 📈 Scale clusters up or down
 - 🛠 Simulate failures by killing nodes
 
+# Pegasus and Perseus
+Pegasus and Perseus are legendary figures from Greek mythology. Pegasus, the winged horse born from the blood of Medusa, symbolises speed, freedom, and divine inspiration. Perseus, a heroic demigod and the slayer of Medusa, is renowned for his bravery, precision, and strategy. Their stories are intertwined—Perseus rode Pegasus after defeating Medusa, using the winged steed to complete his heroic quests. Together, they represent a powerful union of bold action and agile movement.
+
+In the Aerospike ecosystem, Perseus is a high-performance benchmarking tool designed to test and validate Aerospike clusters under various workloads. Pegasus, on the other hand, is a wrapper and orchestration layer that automates the deployment of test environments and runs Perseus at scale. Pegasus makes it easy to spin up full test clusters, configure monitoring, run realistic workloads, and tear down the environment when finished. Much like their mythical counterparts, Aerospike-Perseus and Aerospike-Pegasus work in tandem—Perseus delivers the precision and intensity of benchmarking, while Pegasus provides the speed and flexibility to take flight across environments.
 
 ## 📦 Prerequisites
 Before using Pegasus, make sure the following tools and configurations are set up:
