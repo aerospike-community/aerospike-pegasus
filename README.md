@@ -108,6 +108,8 @@ Below is an explanation of each configuration field in the file:
 ### Namespace Config
 - `NAMESPACE_NAME`: The name of the namespace that will be configured to use during the test. (Cannot be changed after the cluster is created.)
 - `NAMESPACE_DEFAULT_TTL`: Default TTL (time-to-live) for all records inserted into the database. Set to 0 to disable TTL. (Cannot be changed after the cluster is created.)
+- `NAMESPACE_COMPRESSION`: Enables selection of the compression algorithm to be used during the test. Available options are: none, lz4, snappy, and zstd.
+While this won't provide a representative compression ratio, it allows you to evaluate the overhead introduced by enabling compression.
 - `NAMESPACE_PRIMARY_INDEX_STORAGE_TYPE`: Where to store the Primary Index. Choose between MEMORY and DISK. (Cannot be changed after the cluster is created.)
 - `NAMESPACE_SECONDARY_INDEX_STORAGE_TYPE`: Where to store the Secondary Index. Choose between MEMORY and DISK. (Cannot be changed after the cluster is created.)
 - `NAMESPACE_DATA_STORAGE_TYPE`: Where to store the Data. Choose between MEMORY and DISK. (Cannot be changed after the cluster is created.)

@@ -17,13 +17,9 @@ aerolab cluster partition create -n ${CLUSTER_NAME} --nodes=${New_Node_Number} -
 if [ "${NAMESPACE_DATA_STORAGE_TYPE}" = "DISK" ]; then
   echo "Configure Data Storage Type to Disk"
   aerolab cluster partition conf -n ${CLUSTER_NAME} --namespace=${NAMESPACE_NAME} --nodes=${New_Node_Number} --filter-type=nvme --configure=device || exit 1
-fi
+  aerolab conf adjust -n ${CLUSTER_NAME} --nodes=${New_Node_Number}  set "namespace ${NAMESPACE_NAME}.storage-engine device.compression" ${NAMESPACE_COMPRESSION} || exit 1
 
-if [ "${NAMESPACE_DATA_STORAGE_TYPE}" = "MEMORY" ]; then
-  echo "Configure Data Storage Type to Memory"
-  aerolab conf namespace-memory -n ${CLUSTER_NAME} --namespace=${NAMESPACE_NAME} --nodes=${New_Node_Number} --mem-pct=75
 fi
-
 
 if [ "${NAMESPACE_PRIMARY_INDEX_STORAGE_TYPE}" = "MEMORY" ]; then
   echo "Configure Primary Index Storage Type to Memory"
@@ -47,6 +43,12 @@ if [ "${NAMESPACE_SECONDARY_INDEX_STORAGE_TYPE}" = "DISK" ]; then
   aerolab cluster partition conf -n ${CLUSTER_NAME} --namespace=${NAMESPACE_NAME} --nodes=${New_Node_Number} --filter-type=nvme --configure=device --filter-partitions=${DATA_STORAGE_PARTITIONS} || exit 1
   aerolab cluster partition mkfs -n ${CLUSTER_NAME} --nodes=${New_Node_Number} --filter-type=nvme --filter-partitions=${SECONDARY_INDEX_STORAGE_PARTITIONS} || exit 1
   aerolab cluster partition conf -n ${CLUSTER_NAME} --namespace=${NAMESPACE_NAME} --nodes=${New_Node_Number} --filter-type=nvme --configure=si-flash --filter-partitions=${SECONDARY_INDEX_STORAGE_PARTITIONS} || exit 1
+fi
+
+if [ "${NAMESPACE_DATA_STORAGE_TYPE}" = "MEMORY" ]; then
+  echo "Configure Data Storage Type to Memory"
+  aerolab conf namespace-memory -n ${CLUSTER_NAME} --nodes=${New_Node_Number} --namespace=${NAMESPACE_NAME} --mem-pct=75
+  aerolab conf adjust -n ${CLUSTER_NAME} --nodes=${New_Node_Number} set "namespace ${NAMESPACE_NAME}.storage-engine memory.compression" ${NAMESPACE_COMPRESSION} || exit 1
 fi
 
 

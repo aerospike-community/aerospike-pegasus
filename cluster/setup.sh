@@ -14,7 +14,7 @@ aerolab cluster partition create -n ${CLUSTER_NAME} -t nvme -p ${P%?} || exit 1
 if [ "${NAMESPACE_DATA_STORAGE_TYPE}" = "DISK" ]; then
   echo "Configure Data Storage Type to Disk"
   aerolab cluster partition conf -n ${CLUSTER_NAME} --namespace=${NAMESPACE_NAME} --filter-type=nvme --configure=device || exit 1
-aerolab conf adjust -n ${CLUSTER_NAME} set "namespace ${NAMESPACE_NAME}.storage-engine device.compression" ${NAMESPACE_COMPRESSION} || exit 1
+  aerolab conf adjust -n ${CLUSTER_NAME} set "namespace ${NAMESPACE_NAME}.storage-engine device.compression" ${NAMESPACE_COMPRESSION} || exit 1
 fi
 
 if [ "${NAMESPACE_PRIMARY_INDEX_STORAGE_TYPE}" = "MEMORY" ]; then
@@ -43,7 +43,7 @@ fi
 if [ "${NAMESPACE_DATA_STORAGE_TYPE}" = "MEMORY" ]; then
   echo "Configure Data Storage Type to Memory"
   aerolab conf namespace-memory -n ${CLUSTER_NAME} --namespace=${NAMESPACE_NAME} --mem-pct=75
-aerolab conf adjust -n ${CLUSTER_NAME} set "namespace ${NAMESPACE_NAME}.storage-engine memory.compression" ${NAMESPACE_COMPRESSION} || exit 1
+  aerolab conf adjust -n ${CLUSTER_NAME} set "namespace ${NAMESPACE_NAME}.storage-engine memory.compression" ${NAMESPACE_COMPRESSION} || exit 1
 fi
 
 
