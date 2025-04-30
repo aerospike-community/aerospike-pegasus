@@ -1,5 +1,5 @@
-write: 30
-read: 5
+write: 100
+read: 0
 update: 0
 delete: 0
 expressionRead: 0
