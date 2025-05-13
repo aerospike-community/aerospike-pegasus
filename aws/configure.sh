@@ -5,7 +5,7 @@ AWS_EXPIRE="12h" # length of life of nodes prior to expiry; seconds, minutes, ho
 # Aerospike Config
 VER="8.0.0.4"
 CLUSTER_NAME="Demo"
-CLUSTER_NUMBER_OF_NODES="5"
+CLUSTER_NUMBER_OF_NODES="2"
 CLUSTER_INSTANCE_TYPE="i7ie.3xlarge"
 
 # Namespace Config
@@ -31,12 +31,12 @@ GRAFANA_INSTANCE_TYPE="t3.xlarge"
 
 # Client Instance Config
 CLIENT_NAME="Perseus_${CLUSTER_NAME}"
-CLIENT_INSTANCE_TYPE="c6i.16xlarge" #Choose instances with more cpus, more than 32 GB of RAM, and no NVMe. C6a family are good choices.
-CLIENT_NUMBER_OF_NODES=1
+CLIENT_INSTANCE_TYPE="c6i.4xlarge" #Choose instances with more cpus, more than 32 GB of RAM, and no NVMe. C6a family are good choices.
+CLIENT_NUMBER_OF_NODES=2
 
 # Client Generic Workload Config
 TRUNCATE_SET=False
-RECORD_SIZE=5120 #Bytes. This test doesn't allow records smaller than 178 bytes!
+RECORD_SIZE=1120 #Bytes. This test doesn't allow records smaller than 178 bytes!
 BATCH_READ_SIZE=200
 BATCH_WRITE_SIZE=100
 READ_HIT_RATIO=.75

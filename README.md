@@ -156,7 +156,7 @@ While this won't provide a representative compression ratio, it allows you to ev
 - `CLIENT_NAME`: Name of the instance running Perseus.
 - `CLIENT_INSTANCE_TYPE`: Specifies the instance type for the node running Perseus.
 
-    Perseus requires a good number of vCPUs, high network bandwidth, and a reasonable amount of RAM, as it caches the keys of a percentage of inserted records for later querying.
+    Perseus requires a good number of vCPUs, high network bandwidth, and a small amount of RAM.
 
     The C6a and C6i instance families are ideal—they meet all these requirements and are among the most cost-effective options on AWS.
 - `CLIENT_NUMBER_OF_NODES`: Number of Perseus nodes. 
