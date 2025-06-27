@@ -5,8 +5,8 @@ AWS_EXPIRE="12h" # length of life of nodes prior to expiry; seconds, minutes, ho
 # Aerospike Config
 VER="8.0.0.4"
 CLUSTER_NAME="Demo"
-CLUSTER_NUMBER_OF_NODES="4"
-CLUSTER_INSTANCE_TYPE="r6gd.4xlarge"
+CLUSTER_NUMBER_OF_NODES="3"
+CLUSTER_INSTANCE_TYPE="i7ie.3xlarge"
 
 # Namespace Config
 NAMESPACE_NAME="Test"
@@ -19,7 +19,7 @@ NAMESPACE_COMPRESSION="none" #none, lz4, snappy,i zstd
 
 # NVMe Config
 NUMBER_OF_PARTITION_ON_EACH_NVME="10"
-OVERPROVISIONING_PERCENTAGE=0
+OVERPROVISIONING_PERCENTAGE=15
 PRIMARY_INDEX_STORAGE_PARTITIONS="1"
 PARTITION_TREE_SPRIGS=65536
 SECONDARY_INDEX_STORAGE_PARTITIONS="1" # Set if the secondary indexes are on Disk.
@@ -36,14 +36,14 @@ CLIENT_NUMBER_OF_NODES=1
 
 # Client Generic Workload Config
 TRUNCATE_SET=False
-RECORD_SIZE=250 #Bytes. This test doesn't allow records smaller than 178 bytes!
+RECORD_SIZE=1700 #Bytes. This test doesn't allow records smaller than 178 bytes!
 BATCH_READ_SIZE=200
-BATCH_WRITE_SIZE=1000
-READ_HIT_RATIO=1
+BATCH_WRITE_SIZE=100
+READ_HIT_RATIO=0.85
 
 # Client Query Workload Config
 STRING_INDEX=False
-NUMERIC_INDEX=False
+NUMERIC_INDEX=True
 GEO_SPATIAL_INDEX=False
 UDF_AFFREGATION=False
 RANGE_QUERY=True
