@@ -3,7 +3,7 @@ aerolab files upload -c -n ${CLIENT_NAME} $PREFIX"/../client/templates/perseus.s
 
 nip=$(aerolab cluster list -i |grep -A7 ${CLUSTER_NAME} | head -1 | grep -E -o 'int_ip=.{0,15}' | egrep -o '([0-9]{1,3}\.){3}[0-9]{1,3}' )
 
-for (( i=0; i  < ${CLIENT_NUMBER_OF_NODES}; i++ ))
+for (( i=1; i  <= ${CLIENT_NUMBER_OF_NODES}; i++ ))
   do
     Perseus_Conf=$PREFIX"/../client/templates/perseus_configuration_template.yaml"
     sed "s/_NAMESPACE_NAME_/${NAMESPACE_NAME}/g" ${Perseus_Conf} | \
@@ -20,10 +20,10 @@ for (( i=0; i  < ${CLIENT_NUMBER_OF_NODES}; i++ ))
     sed "s/_BATCH_READ_SIZE_/${BATCH_READ_SIZE}/g" | \
     sed "s/_BATCH_WRITE_SIZE_/${BATCH_WRITE_SIZE}/g" | \
     sed "s/_TRUNCATE_SET_/${TRUNCATE_SET}/g" | \
-    sed "s/_PERSEUS_ID_/${i}/g" | \
+    sed "s/_PERSEUS_ID_/$(expr $i - 1)/g" | \
     sed "s/_READ_HIT_RATIO_/${READ_HIT_RATIO}/g" > configuration.yaml
 
-    aerolab files upload -c -n ${CLIENT_NAME} configuration.yaml /root/configuration.yaml || exit 1
+    aerolab files upload -c -n ${CLIENT_NAME} --nodes=${i} configuration.yaml /root/configuration.yaml || exit 1
     rm -rf configuration.yaml
   done
 

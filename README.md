@@ -194,19 +194,6 @@ Perseus generates random records and inserts them into the database. This random
 
 To manage memory usage efficiently, Perseus offers two parameters to control caching behaviour:
 
-- `KEY_CACHE_CAPACITY`: Sets the number of records held in memory. Each key requires 8 bytes, so for example:
-
-    1,000,000,000 keys = 8 GB of RAM
-    
-    This cache operates in a circular fashion: once full, new keys overwrite the oldest entries in a loop.
-- `KEY_CACHE_SAVE_RATIO`: A value between 0.0 and 1.0 that defines the percentage of inserted keys to retain in the cache.
-
-    At 1.0, only the most recent `KEY_CACHE_CAPACITY` records will be queried.
-    
-    Lower values spread the cached keys more broadly across the entire insert timeline, increasing data variety.
-
-    💡 Tip: Unless your test inserts tens of billions of records (which may require hundreds of GBs of RAM), you can safely afford to cache all inserted records by setting `KEY_CACHE_SAVE_RATIO` = 1.0.
-
 ### Client Query Workload Config
 ⚠️ Note: If you're not planning to test a specific query workload, it's best to keep it disabled. Secondary Index maintenance adds overhead on every write, update, or delete operation, which may affect overall performance and skew benchmark results.
 
