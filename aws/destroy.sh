@@ -6,6 +6,6 @@ fi
 
 echo $PREFIX
 
+. $PREFIX/cluster_destroy.sh
 . $PREFIX/client_destroy.sh
 . $PREFIX/grafana_destroy.sh
-. $PREFIX/cluster_destroy.sh
