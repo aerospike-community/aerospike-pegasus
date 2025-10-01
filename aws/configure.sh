@@ -23,7 +23,7 @@ OVERPROVISIONING_PERCENTAGE=15
 PRIMARY_INDEX_STORAGE_PARTITIONS="1"
 PARTITION_TREE_SPRIGS=65536
 SECONDARY_INDEX_STORAGE_PARTITIONS="1" # Set if the secondary indexes are on Disk.
-DATA_STORAGE_PARTITIONS="1-10" # Set if either the primary or secondary indexes are stored on Disk.
+DATA_STORAGE_PARTITIONS="1-5" # Set if either the primary or secondary indexes are stored on Disk.
 
 # GRAFANA Config
 GRAFANA_NAME=${CLUSTER_NAME}"_GRAFANA"
