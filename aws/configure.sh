@@ -1,10 +1,10 @@
 # AWS Config
 AWS_REGION="us-east-1"
-AWS_EXPIRE="12h" # length of life of nodes prior to expiry; seconds, minutes, hours, ex 20h 30m. 0 for no expiry.
+AWS_EXPIRE="24h" # length of life of nodes prior to expiry; seconds, minutes, hours, ex 20h 30m. 0 for no expiry.
 
 # Aerospike Config
 VER="8.0.0.4"
-CLUSTER_NAME="Demo"
+CLUSTER_NAME="Benchmark"
 CLUSTER_NUMBER_OF_NODES="3"
 CLUSTER_INSTANCE_TYPE="r6gd.8xlarge"
 
@@ -18,8 +18,8 @@ NAMESPACE_REPLICATION_FACTOR=2
 NAMESPACE_COMPRESSION="none" #none, lz4, snappy,i zstd
 
 # NVMe Config
-NUMBER_OF_PARTITION_ON_EACH_NVME="10"
-OVERPROVISIONING_PERCENTAGE=0
+NUMBER_OF_PARTITION_ON_EACH_NVME="5"
+OVERPROVISIONING_PERCENTAGE=15
 PRIMARY_INDEX_STORAGE_PARTITIONS="1"
 PARTITION_TREE_SPRIGS=65536
 SECONDARY_INDEX_STORAGE_PARTITIONS="1" # Set if the secondary indexes are on Disk.
