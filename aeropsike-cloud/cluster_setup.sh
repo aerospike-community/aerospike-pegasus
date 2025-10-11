@@ -162,7 +162,16 @@ EOF
         exit 0
     elif [[ "${ACS_CLUSTER_STATUS}" == "provisioning" ]]; then
         echo ""
-        echo "Cluster is still provisioning. Continuing to monitor..."
+        echo "Cluster is still provisioning."
+        
+        # If skip provision wait, return early for parallel execution
+        if [[ "$SKIP_PROVISION_WAIT" == "true" ]]; then
+            echo "  Parallel client setup will begin now..."
+            echo ""
+            return 0  # Use return instead of exit when sourced
+        fi
+        
+        echo "Continuing to monitor..."
         # Will continue to provisioning wait section below
     else
         echo ""
@@ -289,6 +298,16 @@ export ACS_CLUSTER_STATUS="provisioning"
 EOF
 
 fi  # End of cluster creation block
+
+# Check if we should skip provision wait (for parallel execution)
+if [[ "$SKIP_PROVISION_WAIT" == "true" ]]; then
+    echo ""
+    echo "✓ Cluster setup initiated successfully!"
+    echo "  Status: provisioning"
+    echo "  Parallel client setup will begin now..."
+    echo ""
+    return 0  # Use return instead of exit when sourced
+fi
 
 # Wait for cluster provisioning with better progress indicator
 echo ""

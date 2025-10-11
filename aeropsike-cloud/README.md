@@ -107,23 +107,48 @@ cd aeropsike-cloud
 
 ## Cluster Setup Process
 
-The `setup.sh` script performs the following steps:
+The `setup.sh` script performs **parallel execution** for faster setup:
 
+### Phase 1: Start Cluster Setup
 1. **Authentication** - Acquires OAuth token from Aerospike Cloud
 2. **Cluster Check** - Verifies if cluster already exists
 3. **Cluster Creation** - Creates new database cluster if needed
-4. **Provisioning Wait** - Monitors cluster status with live progress indicator
-   - Checks status every 60 seconds
-   - Shows elapsed time and spinning indicator
-   - **Fully resumable** - Can interrupt (Ctrl+C) and re-run
-5. **Connection Details** - Saves connection info to `~/.aerospike-cloud/{cluster-id}/`
 
-### Resumable Setup
+### Phase 2-3: Parallel Execution (⚡ **40% faster!**)
+- **Client Setup** (5-10 min) - Provisions EC2 instances while cluster provisions
+- **Cluster Provisioning** (15-20 min) - Monitors status every 60 seconds
 
-The setup process is fully resumable! If interrupted:
-- Cluster state is saved to `~/.aerospike-cloud/current_cluster.sh`
-- Simply re-run `./setup.sh` to resume from where you left off
-- The script automatically detects existing clusters and their status
+### Phase 4-5: Completion
+4. **Final Checks** - Ensures both cluster and client are ready
+5. **Connection Details** - Saves all configuration files
+
+### Key Features
+- ✅ **Parallel execution** - Client provisions while cluster provisions
+- ✅ **Fully resumable** - Can interrupt (Ctrl+C) and re-run
+- ✅ **State validation** - Validates against Aerospike Cloud API, AWS CLI, and aerolab
+- ✅ **Smart recovery** - Detects manual changes and auto-corrects state
+- ✅ **Live progress** - Shows elapsed time and spinning indicator
+- ✅ **Total time**: ~15-20 minutes (vs 20-30 minutes sequential)
+
+See [PARALLEL_SETUP.md](PARALLEL_SETUP.md) and [STATE_MANAGEMENT.md](STATE_MANAGEMENT.md) for detailed documentation.
+
+### Resumable Setup with State Validation
+
+The setup process is fully resumable with real-time validation! 
+
+**On every run:**
+- ✅ Validates cluster status via **Aerospike Cloud API**
+- ✅ Validates client existence via **aerolab**
+- ✅ Validates VPC peering via **Aerospike Cloud API + AWS CLI**
+- ✅ Auto-corrects state if resources were manually changed
+- ✅ Resumes from the correct phase
+
+**If interrupted:**
+- State is saved to `~/.aerospike-cloud/setup_state.sh`
+- Simply re-run `./setup.sh` to resume
+- Validation ensures state matches reality
+
+See [STATE_MANAGEMENT.md](STATE_MANAGEMENT.md) for comprehensive validation details.
 
 ### Cluster Files
 
@@ -135,14 +160,129 @@ After successful setup, cluster information is saved to:
     └── cluster_config.sh           # Connection details (hostname, TLS, port)
 ```
 
-## Next Steps
+## Client Setup
 
-Future implementations will include:
-1. ✅ Authentication and token management
-2. ✅ Database cluster creation
-3. 🔄 VPC peering setup
-4. 🔄 Client instance deployment
-5. 🔄 Grafana monitoring setup
+After your cluster is active, provision client instances to run workloads:
+
+```bash
+./client_setup.sh
+```
+
+The client setup:
+1. ✅ **Provisions EC2 instances** using aerolab in a **separate VPC**
+2. ✅ **Extracts all details** (VPC ID, subnet IDs, instance IDs, IPs)
+3. ✅ **Tracks configuration** in `~/.aerospike-cloud/client/`
+4. ✅ **Prepares for VPC peering** with the Aerospike Cloud cluster
+
+### Client Configuration
+
+```
+~/.aerospike-cloud/
+└── client/
+    ├── client_config.sh    # Environment variables (VPC ID, IPs, etc.)
+    └── client_info.json    # Full client details
+```
+
+See [CLIENT_SETUP.md](CLIENT_SETUP.md) for detailed documentation.
+
+## VPC Peering Setup
+
+Enable private connectivity between your client VPC and Aerospike Cloud cluster:
+
+```bash
+./vpc_peering_setup.sh
+```
+
+The VPC peering setup:
+1. ✅ **Validates prerequisites** (cluster active, client provisioned)
+2. ✅ **Initiates peering request** via Aerospike Cloud API
+3. ✅ **Accepts peering connection** in AWS
+4. ✅ **Configures route tables** automatically
+5. ✅ **Associates Private Hosted Zone** for DNS resolution
+6. ✅ **Configures security groups** (ports 4000, 3000, 9145)
+7. ✅ **Tests connectivity** and DNS resolution
+8. ✅ **Fully resumable** with state management
+
+### What Gets Configured
+
+- **VPC Peering Connection** between client VPC and Aerospike Cloud VPC
+- **Route table entries** to Aerospike Cloud CIDR (10.131.0.0/19)
+- **DNS resolution** via Private Hosted Zone association
+- **Security group rules** for Aerospike ports (4000 TLS, 3000 non-TLS, 9145 metrics)
+
+### Configuration Files
+
+```
+~/.aerospike-cloud/
+└── {cluster-id}/
+    └── vpc_peering.sh      # Peering ID, Zone ID, CIDR blocks
+```
+
+### Testing Connectivity
+
+**Automated Verification (Recommended):**
+
+```bash
+./verify_connectivity.sh
+```
+
+This script automatically:
+- ✅ Uses aerolab to SSH into the client
+- ✅ Tests DNS resolution of cluster hostname
+- ✅ Tests TCP connectivity to ports 4000, 3000, 9145
+- ✅ Attempts AQL connection (if installed)
+- ✅ Provides detailed troubleshooting if tests fail
+
+**Manual Testing (from client instance):**
+
+```bash
+# SSH to client
+source ~/.aerospike-cloud/client/client_config.sh
+ssh -i ~/.ssh/key.pem ubuntu@${CLIENT_PUBLIC_IPS}
+
+# Test DNS resolution
+dig +short {cluster-hostname}
+
+# Test port connectivity
+nc -zv {aerospike-ip} 4000
+
+# Connect with aql
+aql --tls-enable --tls-name {cluster-id} \
+    --tls-cafile {cert-path} \
+    -h {hostname}:4000
+```
+
+## Destroy Resources
+
+### Destroy Everything
+```bash
+./destroy.sh --yes    # Destroy VPC peering + client + cluster
+```
+
+### Destroy Components Individually
+```bash
+# Destroy only VPC peering
+./vpc_peering_destroy.sh --yes
+
+# Destroy only client
+./client_destroy.sh
+
+# Destroy only cluster
+./cluster_destroy.sh --yes
+```
+
+**Destruction order:** VPC Peering → Client → Cluster
+
+## Implementation Status
+
+- ✅ **Authentication and token management**
+- ✅ **Database cluster creation and monitoring**
+- ✅ **Resumable cluster setup with state management**
+- ✅ **Parallel execution** (client + cluster) - **40% faster setup!**
+- ✅ **Client instance deployment with VPC tracking**
+- ✅ **VPC peering setup** - Automated private connectivity
+- ✅ **Complete teardown scripts with confirmation**
+- 🔄 **Grafana monitoring setup** (coming soon)
 
 ## Troubleshooting
 
