@@ -1,0 +1,39 @@
+#!/bin/bash
+
+# Help function
+show_help() {
+    echo "Usage: $0 [USERNAME]"
+    echo ""
+    echo "Connect to Aerospike cluster using asadm with specified user credentials."
+    echo ""
+    echo "Examples:"
+    echo "  $0                    # Connect as PARADMIN (default)"
+    echo "  $0 asbench            # Connect as ASBENCH (case insensitive)"
+    echo ""
+    echo "Notes:"
+    echo "  - User credentials must be defined in \$CURRENT_PROJECT_ROOT/project-config/acscloud_config/\$ACS_CLUSTER_ID/user_config.sh"
+    echo "  - Environment variables should be named USERNAME_ID and USERNAME_PASSWORD"
+}
+
+# Check for help flag
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    show_help
+    exit 0
+fi
+
+# Set default user to PARADMIN if no argument is provided
+user="${1:-PARADMIN}"
+# Convert user to uppercase
+user=$(echo "$user" | tr '[:lower:]' '[:upper:]')
+
+# Construct the variable names dynamically
+user_id_var="${user}_ID"
+user_password_var="${user}_PASSWORD"
+
+# Hack for now, as $ACS_CLUSTER_HOSTNAME is not resolving
+host=$(dig +short $ACS_CLUSTER_HOSTNAME | head -1)
+
+echo /opt/aerospike/bin/aql -U ${!user_id_var} -P ${!user_password_var} -h $host -p $SERVICE_PORT --tls-enable --tls-name $ACS_CLUSTER_TLSNAME --tls-cafile /etc/aerospike/ssl/${ACS_CLUSTER_TLSNAME}/cacert.pem
+
+set -x
+/opt/aerospike/bin/aql -U ${!user_id_var} -P ${!user_password_var} -h $host -p $SERVICE_PORT --tls-enable --tls-name $ACS_CLUSTER_TLSNAME --tls-cafile /etc/aerospike/ssl/${ACS_CLUSTER_TLSNAME}/cacert.pem

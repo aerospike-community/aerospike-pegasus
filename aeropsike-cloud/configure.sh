@@ -52,6 +52,6 @@ RANGE_QUERY=False
 NORMAL_RANGE=10
 MAX_RANGE=100
 CHANCE_OF_MAX=.01
-
 # setup backend
 aerolab config backend -t aws -r ${AWS_REGION}
+
