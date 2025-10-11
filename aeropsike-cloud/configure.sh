@@ -1,42 +1,58 @@
-# AWS Config
-AWS_REGION="ap-south-1"
-AWS_EXPIRE="2h" # length of life of nodes prior to expiry; seconds, minutes, hours, ex 20h 30m. 0 for no expiry.
+# ==============================================
+# Aerospike Cloud Configuration
+# ==============================================
 
-# Aerospike Config
-VER="8.0.0.4"
-CLUSTER_NAME="Benchmark"
-CLUSTER_NUMBER_OF_NODES="3"
-CLUSTER_INSTANCE_TYPE="r6gd.8xlarge"
+# Credentials Directory
+ACS_CONFIG_DIR="${HOME}/.aerospike-cloud"
+
+# API Configuration
+AUTH_API_URI="https://auth.control.aerospike.cloud/oauth/token"
+REST_API_URI="https://api.aerospike.cloud/v2/databases"
+ACS_AUTH_HEADER="${ACS_CONFIG_DIR}/auth.header"
+
+# Load Aerospike Cloud Credentials from credentials config file
+if [ -f "${ACS_CONFIG_DIR}/credentials.conf" ]; then
+    source "${ACS_CONFIG_DIR}/credentials.conf"
+fi
+
+# ==============================================
+# Database/Cluster Configuration
+# ==============================================
+
+# Cluster Basic Config
+ACS_CLUSTER_NAME="test-skr"
+CLUSTER_SIZE="2"  # Number of nodes (must be divisible by AZ count)
+
+# Infrastructure Config
+CLOUD_PROVIDER="aws"  # aws, gcp
+CLOUD_REGION="ap-south-1"
+INSTANCE_TYPE="i4i.large"  # Instance type for the nodes
+AVAILABILITY_ZONE_COUNT="2"  # Number of AZs (1-3)
+DEST_CIDR="10.131.0.0/19"  # /19 IPv4 CIDR block for the database VPC (cannot be 10.129.0.0/19)
+
+# Aerospike Cloud Config
+DATA_STORAGE="local-disk"  # memory, local-disk, network-storage
+DATA_RESILIENCY=""  # Optional: local-disk, network-storage (for in-memory or local-disk databases)
+
+# Aerospike Server Config
+AEROSPIKE_VERSION=""  # Optional: specific version, leave empty for latest
 
 # Namespace Config
-NAMESPACE_NAME="Test"
-NAMESPACE_DEFAULT_TTL="0"
-NAMESPACE_PRIMARY_INDEX_STORAGE_TYPE="MEMORY" #MEMORY, DISK
-NAMESPACE_SECONDARY_INDEX_STORAGE_TYPE="MEMORY" #MEMORY, DISK
-NAMESPACE_DATA_STORAGE_TYPE="DISK" #MEMORY, DISK
-NAMESPACE_REPLICATION_FACTOR=2
-NAMESPACE_COMPRESSION="none" #none, lz4, snappy,i zstd
+NAMESPACE_NAME="test"
+NAMESPACE_REPLICATION_FACTOR="2"
+NAMESPACE_COMPRESSION=""  # Optional: none, lz4, snappy, zstd
 
-# NVMe Config
-NUMBER_OF_PARTITION_ON_EACH_NVME="5"
-OVERPROVISIONING_PERCENTAGE=15
-PRIMARY_INDEX_STORAGE_PARTITIONS="1"
-PARTITION_TREE_SPRIGS=65536
-SECONDARY_INDEX_STORAGE_PARTITIONS="1" # Set if the secondary indexes are on Disk.
-DATA_STORAGE_PARTITIONS="1-5" # Set if either the primary or secondary indexes are stored on Disk.
-
-# GRAFANA Config
-GRAFANA_NAME=${CLUSTER_NAME}"_GRAFANA"
-GRAFANA_INSTANCE_TYPE="t3.xlarge"
+# ==============================================
+# Client Workload Configuration (for future use)
+# ==============================================
 
 # Client Instance Config
-CLIENT_NAME="Perseus_${CLUSTER_NAME}"
-CLIENT_INSTANCE_TYPE="c6i.4xlarge" #Choose instances with more cpus, more than 32 GB of RAM, and no NVMe. C6a family are good choices.
+CLIENT_NAME="Perseus_${ACS_CLUSTER_NAME}"
 CLIENT_NUMBER_OF_NODES=1
 
 # Client Generic Workload Config
 TRUNCATE_SET=False
-RECORD_SIZE=300 #Bytes. This test doesn't allow records smaller than 178 bytes!
+RECORD_SIZE=300
 BATCH_READ_SIZE=200
 BATCH_WRITE_SIZE=100
 READ_HIT_RATIO=1
@@ -52,6 +68,3 @@ RANGE_QUERY=False
 NORMAL_RANGE=10
 MAX_RANGE=100
 CHANCE_OF_MAX=.01
-# setup backend
-aerolab config backend -t aws -r ${AWS_REGION}
-

@@ -1,38 +1,31 @@
 #!/bin/bash
 
 function acs_get_all_clusters_json() {
-#  local cluster_json=$(curl 'https://api.aerospike.cloud/v2/databases' -sX GET -H "@${ACS_AUTH_HEADER}" | jq -r '.databases[]')
-  local cluster_json=$(curl "$REST_API_URI" -sX GET -H "@${ACS_AUTH_HEADER}" | jq -r '.databases[]')
-  echo "${cluster_json}"
+  # Return the full API response (not individual databases)
+  curl "${REST_API_URI}?status_ne=decommissioned,decommissioning" -sX GET -H "@${ACS_AUTH_HEADER}" 2>/dev/null
 }
 
 function acs_get_cluster_json() {
   local cluster_id=$1
   local cluster_json=$(
-    acs_get_all_clusters_json | jq --arg database "${cluster_id}"  'select(.id == $database)'
+    curl -s "${REST_API_URI}?status_ne=decommissioned,decommissioning" -H "@${ACS_AUTH_HEADER}" | \
+      jq --arg database "${cluster_id}" '.databases[] | select(.id == $database)' 2>/dev/null
   )
   echo "${cluster_json}"
 }
 
 function acs_get_active_clusters_json() {
-  local cluster_json=$(
-    acs_get_all_clusters_json | \
-      jq  'select(.health.status != "decommissioning") | select(.health.status != "decommissioned")'
-  )
-  echo "${cluster_json}"
+  # Now using API query parameter, so just return all from the filtered query
+  acs_get_all_clusters_json
 }
 
 function acs_get_cluster_id() {
   local cluster_name=$1
-  local get_all_clusters=$2
+  local get_all_clusters=${2:-false}
 
-  if [[ "${get_all_clusters}" == "true" ]]; then
-    local cluster_json=$(acs_get_all_clusters_json)
-  else
-    local cluster_json=$(acs_get_active_clusters_json)
-  fi
-
-  local cluster_id=$(echo "${cluster_json}" | jq -r --arg cluster_name "${cluster_name}" 'select(.name == $cluster_name) | .id')
+  # Query the API directly and filter with jq in one pass
+  local cluster_id=$(curl -s "${REST_API_URI}?status_ne=decommissioned,decommissioning" -H "@${ACS_AUTH_HEADER}" | \
+    jq -r --arg cluster_name "${cluster_name}" '.databases[] | select(.name == $cluster_name) | .id' 2>/dev/null | head -1)
 
   echo "${cluster_id}"
 }
@@ -43,7 +36,8 @@ function acs_list_clusters() {
 
 function acs_get_cluster_hostname() {
   local cluster_id=$1
-  local cluster_hostname=$(acs_get_cluster_json "${cluster_id}" | jq -r '.connectionDetails.host')
+  local cluster_hostname=$(curl -s "${REST_API_URI}?status_ne=decommissioned,decommissioning" -H "@${ACS_AUTH_HEADER}" | \
+    jq -r --arg id "${cluster_id}" '.databases[] | select(.id == $id) | .connectionDetails.host' 2>/dev/null)
   echo "${cluster_hostname}"
 }
 
@@ -55,7 +49,8 @@ function acs_get_cluster_tls_cert() {
 
 function acs_get_cluster_tls_name() {
   local cluster_id=$1
-  local cluster_tls_name=$(acs_get_cluster_json "${cluster_id}" | jq -r '.connectionDetails.host')
+  local cluster_tls_name=$(curl -s "${REST_API_URI}?status_ne=decommissioned,decommissioning" -H "@${ACS_AUTH_HEADER}" | \
+    jq -r --arg id "${cluster_id}" '.databases[] | select(.id == $id) | .connectionDetails.host' 2>/dev/null)
   echo "${cluster_tls_name}"
 }
 
@@ -67,7 +62,8 @@ function acs_get_cluster_tls_key() {
 
 function acs_get_cluster_status() {
   local cluster_id=$1
-  local cluster_status=$(acs_get_cluster_json "${cluster_id}" | jq -r '.health.status')
+  local cluster_status=$(curl -s "${REST_API_URI}?status_ne=decommissioned,decommissioning" -H "@${ACS_AUTH_HEADER}" | \
+    jq -r --arg id "${cluster_id}" '.databases[] | select(.id == $id) | .health.status' 2>/dev/null)
   echo "${cluster_status}"
 }
 
