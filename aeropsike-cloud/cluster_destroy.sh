@@ -4,4 +4,109 @@ if [ -z "$PREFIX" ];
     . $PREFIX/configure.sh
 fi
 
-. $PREFIX/../cluster/destroy.sh
+# Parse command line arguments
+SKIP_CONFIRM=false
+if [[ "$1" == "--yes" ]] || [[ "$1" == "-y" ]]; then
+    SKIP_CONFIRM=true
+fi
+
+echo "====================================="
+echo "Aerospike Cloud - Cluster Destroy"
+echo "====================================="
+echo ""
+
+# Source common functions
+. $PREFIX/api-scripts/common.sh
+
+# Check if current_cluster.sh exists
+if [ ! -f "${ACS_CONFIG_DIR}/current_cluster.sh" ]; then
+    echo "No cluster found in tracker file."
+    echo "Looking for cluster by name '${ACS_CLUSTER_NAME}'..."
+    
+    ACS_CLUSTER_ID=$(acs_get_cluster_id "${ACS_CLUSTER_NAME}" 2>/dev/null)
+    
+    if [ -z "$ACS_CLUSTER_ID" ]; then
+        echo "ERROR: No cluster found with name '${ACS_CLUSTER_NAME}'"
+        exit 1
+    fi
+    
+    echo "Found cluster ID: ${ACS_CLUSTER_ID}"
+else
+    # Load cluster info from tracker
+    source "${ACS_CONFIG_DIR}/current_cluster.sh"
+    echo "Found tracked cluster:"
+    echo "  Name: ${ACS_CLUSTER_NAME}"
+    echo "  ID: ${ACS_CLUSTER_ID}"
+fi
+
+# Get current status
+ACS_CLUSTER_STATUS=$(acs_get_cluster_status "${ACS_CLUSTER_ID}" 2>/dev/null)
+echo "  Current status: ${ACS_CLUSTER_STATUS}"
+echo ""
+
+# Confirm deletion
+if [[ "$SKIP_CONFIRM" == false ]]; then
+    read -p "Are you sure you want to delete cluster '${ACS_CLUSTER_NAME}' (${ACS_CLUSTER_ID})? [y/N]: " -n 1 -r
+    echo ""
+    
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Deletion cancelled."
+        exit 0
+    fi
+else
+    echo "Skipping confirmation (--yes flag provided)"
+fi
+
+echo ""
+echo "Deleting cluster..."
+
+# Call the destroy API
+HTTP_CODE=$(curl -s "${REST_API_URI}/${ACS_CLUSTER_ID}" \
+    -X DELETE \
+    -H "@${ACS_AUTH_HEADER}" \
+    -w '%{http_code}' \
+    -o /dev/null)
+
+if [[ "${HTTP_CODE}" -eq "202" ]] || [[ "${HTTP_CODE}" -eq "204" ]]; then
+    echo "✓ Cluster deletion initiated successfully (HTTP ${HTTP_CODE})"
+    echo ""
+    
+    # Clean up tracker files
+    echo "Cleaning up tracker files..."
+    
+    if [ -f "${ACS_CONFIG_DIR}/current_cluster.sh" ]; then
+        rm -f "${ACS_CONFIG_DIR}/current_cluster.sh"
+        echo "✓ Removed ${ACS_CONFIG_DIR}/current_cluster.sh"
+    fi
+    
+    if [ -d "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}" ]; then
+        rm -rf "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}"
+        echo "✓ Removed ${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/"
+    fi
+    
+    echo ""
+    echo "====================================="
+    echo "✓ Cluster destruction complete!"
+    echo "====================================="
+    echo ""
+    echo "Note: The cluster may take a few minutes to fully decommission."
+    echo "You can verify by checking the Aerospike Cloud console."
+    
+else
+    echo ""
+    echo "ERROR: Failed to delete cluster!"
+    echo "HTTP Response Code: ${HTTP_CODE}"
+    
+    # Try to get error details
+    ERROR_RESPONSE=$(curl -s "${REST_API_URI}/${ACS_CLUSTER_ID}" \
+        -X DELETE \
+        -H "@${ACS_AUTH_HEADER}")
+    
+    if [ -n "$ERROR_RESPONSE" ]; then
+        echo ""
+        echo "API Error Response:"
+        echo "$ERROR_RESPONSE" | jq '.' 2>/dev/null || echo "$ERROR_RESPONSE"
+    fi
+    
+    exit 1
+fi

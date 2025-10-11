@@ -4,8 +4,8 @@ if [ -z "$PREFIX" ];
     . $PREFIX/configure.sh
 fi
 
-echo $PREFIX
-
 . $PREFIX/cluster_destroy.sh
-. $PREFIX/client_destroy.sh
-. $PREFIX/grafana_destroy.sh
+
+# TODO: Implement client and grafana destroy for Aerospike Cloud
+# . $PREFIX/client_destroy.sh
+# . $PREFIX/grafana_destroy.sh
