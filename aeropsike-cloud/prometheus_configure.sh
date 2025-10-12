@@ -100,18 +100,21 @@ echo ""
 echo "Configuring Prometheus to scrape cluster..."
 echo ""
 
-# Build scrape targets (each on its own line to avoid spacing issues)
+# Build scrape targets as a YAML array
 SCRAPE_TARGETS=""
 IFS=',' read -ra IPS <<< "$CLUSTER_IPS"
 for ip in "${IPS[@]}"; do
-    SCRAPE_TARGETS="${SCRAPE_TARGETS}
-        - ${ip}:${PROMETHEUS_PORT}"
+    if [ -z "$SCRAPE_TARGETS" ]; then
+        SCRAPE_TARGETS="${ip}:${PROMETHEUS_PORT}"
+    else
+        SCRAPE_TARGETS="${SCRAPE_TARGETS}, ${ip}:${PROMETHEUS_PORT}"
+    fi
 done
 
-# Create the scrape config with proper YAML formatting
+# Create the scrape config with proper YAML array formatting
 SCRAPE_CONFIG="  - job_name: aerospike-cloud
     static_configs:
-      - targets:${SCRAPE_TARGETS}"
+      - targets: [${SCRAPE_TARGETS}]"
 
 # Check if config already exists
 echo "Checking existing Prometheus configuration..."
