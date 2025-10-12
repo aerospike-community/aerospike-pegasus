@@ -327,18 +327,32 @@ finalize_setup() {
     # Load cluster info
     source "${ACS_CONFIG_DIR}/current_cluster.sh"
     
+    # Load cluster connection details if available
+    if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh" ]; then
+        source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh"
+    fi
+    
+    echo "Cluster Details:"
+    echo "  Name: ${ACS_CLUSTER_NAME}"
+    echo "  ID: ${ACS_CLUSTER_ID}"
+    echo "  Status: ${ACS_CLUSTER_STATUS}"
+    if [ -n "${ACS_CLUSTER_HOSTNAME}" ]; then
+        echo "  Hostname: ${ACS_CLUSTER_HOSTNAME}"
+        echo "  TLS Name: ${ACS_CLUSTER_TLSNAME}"
+        echo "  Port: ${SERVICE_PORT}"
+    fi
+    echo ""
+    
     # Load client info if exists
     if [ -f "${CLIENT_CONFIG_DIR}/client_config.sh" ]; then
         source "${CLIENT_CONFIG_DIR}/client_config.sh"
         
-        echo "Cluster Details:"
-        echo "  Name: ${ACS_CLUSTER_NAME}"
-        echo "  ID: ${ACS_CLUSTER_ID}"
-        echo "  Status: ${ACS_CLUSTER_STATUS}"
-        echo ""
         echo "Client Details:"
         echo "  Name: ${CLIENT_NAME}"
+        echo "  Instance Type: ${CLIENT_INSTANCE_TYPE}"
         echo "  VPC ID: ${CLIENT_VPC_ID}"
+        echo "  VPC CIDR: ${CLIENT_VPC_CIDR}"
+        echo "  Private IPs: ${CLIENT_PRIVATE_IPS}"
         echo "  Public IPs: ${CLIENT_PUBLIC_IPS}"
         echo ""
         
@@ -349,13 +363,11 @@ finalize_setup() {
                 source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/vpc_peering.sh"
                 echo "  Status: Active"
                 echo "  Peering ID: ${PEERING_ID}"
+                echo "  Client VPC: ${CLIENT_VPC_ID} (${CLIENT_VPC_CIDR})"
+                echo "  Cluster CIDR: ${CLUSTER_CIDR}"
+                echo "  Hosted Zone ID: ${ZONE_ID}"
             fi
         fi
-    else
-        echo "Cluster Details:"
-        echo "  Name: ${ACS_CLUSTER_NAME}"
-        echo "  ID: ${ACS_CLUSTER_ID}"
-        echo "  Status: ${ACS_CLUSTER_STATUS}"
     fi
     
     echo ""
