@@ -7,13 +7,15 @@ PREFIX=$(pwd "$0")"/"$(dirname "$0")
 STATE_FILE="${ACS_CONFIG_DIR}/setup_state.sh"
 if [ -f "$STATE_FILE" ]; then
     source "$STATE_FILE"
-    # Initialize VPC_PEERING_PHASE if not set (backward compatibility)
+    # Initialize phases if not set (backward compatibility)
     VPC_PEERING_PHASE="${VPC_PEERING_PHASE:-pending}"
+    GRAFANA_SETUP_PHASE="${GRAFANA_SETUP_PHASE:-pending}"
 else
     # Initialize state
     CLUSTER_SETUP_PHASE="pending"     # pending, provisioning, active, complete
     CLIENT_SETUP_PHASE="pending"      # pending, running, complete
     VPC_PEERING_PHASE="pending"       # pending, configured, complete
+    GRAFANA_SETUP_PHASE="pending"     # pending, complete
 fi
 
 # ============================================
@@ -26,6 +28,7 @@ save_state() {
 export CLUSTER_SETUP_PHASE="${CLUSTER_SETUP_PHASE}"
 export CLIENT_SETUP_PHASE="${CLIENT_SETUP_PHASE}"
 export VPC_PEERING_PHASE="${VPC_PEERING_PHASE}"
+export GRAFANA_SETUP_PHASE="${GRAFANA_SETUP_PHASE}"
 EOF
 }
 
@@ -143,6 +146,43 @@ validate_state() {
         fi
     fi
     
+    # Check if Grafana instance actually exists
+    if [[ "$GRAFANA_SETUP_PHASE" != "pending" ]]; then
+        echo "  Checking Grafana '${GRAFANA_NAME}'..."
+        
+        # Configure aerolab backend
+        aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
+        
+        GRAFANA_EXISTS=$(aerolab client list -j 2>/dev/null | jq -r ".[] | select(.ClientName == \"${GRAFANA_NAME}\") | .ClientName" | head -1)
+        
+        if [ -z "$GRAFANA_EXISTS" ]; then
+            echo "     ⚠️  Grafana instance not found in aerolab (may be deleted)"
+            echo "     Resetting Grafana state to 'pending'"
+            GRAFANA_SETUP_PHASE="pending"
+            state_changed=true
+            rm -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
+        else
+            echo "     ✓ Grafana exists: ${GRAFANA_EXISTS}"
+            
+            # Check if config file exists
+            if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
+                if [[ "$GRAFANA_SETUP_PHASE" != "complete" ]]; then
+                    echo "     Updating state: ${GRAFANA_SETUP_PHASE} → complete"
+                    GRAFANA_SETUP_PHASE="complete"
+                    state_changed=true
+                fi
+            else
+                echo "     ⚠️  Grafana config missing, will recreate"
+                if [[ "$GRAFANA_SETUP_PHASE" == "complete" ]]; then
+                    GRAFANA_SETUP_PHASE="pending"
+                    state_changed=true
+                fi
+            fi
+        fi
+    else
+        echo "  ℹ️  No Grafana instance provisioned yet"
+    fi
+    
     # Save state if anything changed
     if [ "$state_changed" = true ]; then
         echo ""
@@ -158,6 +198,7 @@ display_current_state() {
     echo "  Cluster:     ${CLUSTER_SETUP_PHASE:-unknown}"
     echo "  Client:      ${CLIENT_SETUP_PHASE:-unknown}"
     echo "  VPC Peering: ${VPC_PEERING_PHASE:-pending}"
+    echo "  Grafana:     ${GRAFANA_SETUP_PHASE:-pending}"
     echo ""
 }
 
@@ -337,6 +378,44 @@ run_vpc_peering_setup() {
     echo ""
 }
 
+run_grafana_setup() {
+    echo ""
+    echo "============================================"
+    echo "Phase 7: Grafana/Monitoring Setup"
+    echo "============================================"
+    echo ""
+    
+    # Check if Grafana config exists AND instance actually exists in aerolab
+    if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
+        source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
+        
+        # Verify instance actually exists
+        aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
+        GRAFANA_EXISTS=$(aerolab client list -j 2>/dev/null | jq -r ".[] | select(.ClientName == \"${GRAFANA_NAME}\") | .ClientName" | head -1)
+        
+        if [ -n "$GRAFANA_EXISTS" ]; then
+            echo "✓ Grafana already configured"
+            echo "  Dashboard: ${GRAFANA_URL}"
+            echo ""
+            return 0
+        else
+            echo "⚠️  Grafana config found but instance doesn't exist (may have been deleted)"
+            echo "  Recreating Grafana instance..."
+            echo ""
+            # Clean up stale config
+            rm -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
+        fi
+    fi
+    
+    # Run Grafana setup
+    . $PREFIX/grafana_setup.sh
+    
+    GRAFANA_SETUP_PHASE="complete"
+    save_state
+    
+    echo ""
+}
+
 finalize_setup() {
     CLUSTER_SETUP_PHASE="complete"
     save_state
@@ -400,6 +479,19 @@ finalize_setup() {
                 echo "  Cluster CIDR: ${CLUSTER_CIDR}"
                 echo "  Hosted Zone ID: ${ZONE_ID}"
             fi
+            echo ""
+        fi
+        
+        # Check Grafana status
+        if [[ "$GRAFANA_SETUP_PHASE" == "complete" ]]; then
+            echo "Grafana/Monitoring:"
+            if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
+                source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
+                echo "  Dashboard: ${GRAFANA_URL}"
+                echo "  Instance: ${GRAFANA_NAME}"
+                echo "  IP: ${GRAFANA_IP}"
+                echo "  Credentials: admin/admin"
+            fi
         fi
     fi
     
@@ -410,23 +502,30 @@ finalize_setup() {
         echo "Next Steps:"
         echo "  1. Set up VPC peering: ./vpc_peering_setup.sh"
         echo "  2. Verify connectivity: ./verify_connectivity.sh"
-        echo "  3. Build Perseus workload: ./client/buildPerseus.sh"
-        echo "  4. Run workload: ./client/runPerseus.sh"
-    else
+        echo "  3. Setup Grafana: ./grafana_setup.sh"
+        echo "  4. Build Perseus workload: ./client/buildPerseus.sh"
+        echo "  5. Run workload: ./client/runPerseus.sh"
+    elif [[ "$GRAFANA_SETUP_PHASE" != "complete" ]]; then
         echo "Next Steps:"
-        echo "  1. Verify connectivity: ./verify_connectivity.sh"
+        echo "  1. Setup Grafana: ./grafana_setup.sh"
         echo "  2. Build Perseus workload: ./client/buildPerseus.sh"
         echo "  3. Run workload: ./client/runPerseus.sh"
-        echo "  4. Monitor with Grafana (coming soon)"
+    else
+        echo "Next Steps:"
+        echo "  1. Build Perseus workload: ./client/buildPerseus.sh"
+        echo "  2. Run workload: ./client/runPerseus.sh"
+        echo "  3. View metrics: ${GRAFANA_URL}"
         
-        # Offer to run connectivity verification
-        echo ""
-        read -p "Would you like to verify connectivity now? [Y/n]: " -n 1 -r
-        echo ""
-        
-        if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+        # Offer to run connectivity verification if not done
+        if [ ! -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh" ] || ! grep -q "CLUSTER_IPS" "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh" 2>/dev/null; then
             echo ""
-            . $PREFIX/verify_connectivity.sh
+            read -p "Would you like to verify connectivity now? [Y/n]: " -n 1 -r
+            echo ""
+            
+            if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+                echo ""
+                . $PREFIX/verify_connectivity.sh
+            fi
         fi
     fi
     echo ""
@@ -492,10 +591,23 @@ if [[ "$CLUSTER_SETUP_PHASE" == "active" ]] && [[ "$CLIENT_SETUP_PHASE" == "comp
     fi
 fi
 
-# Phase 6: Final setup complete
+# Phase 6: Setup Grafana (if VPC peering is complete and Grafana not done)
+if [[ "$CLUSTER_SETUP_PHASE" == "active" ]] && [[ "$CLIENT_SETUP_PHASE" == "complete" ]] && [[ "$VPC_PEERING_PHASE" == "complete" ]] && [[ "$GRAFANA_SETUP_PHASE" == "pending" ]]; then
+    # Ask if user wants to set up Grafana
+    echo ""
+    read -p "Would you like to set up Grafana/Monitoring now? [Y/n]: " -n 1 -r
+    echo ""
+    
+    if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+        run_grafana_setup
+    else
+        echo "Skipping Grafana setup. You can run it later with:"
+        echo "  ./grafana_setup.sh"
+        echo ""
+    fi
+fi
+
+# Phase 7: Final setup complete
 if [[ "$CLUSTER_SETUP_PHASE" == "active" ]] && [[ "$CLIENT_SETUP_PHASE" == "complete" ]]; then
     finalize_setup
 fi
-
-# TODO: Implement Grafana setup for Aerospike Cloud
-# . $PREFIX/grafana_setup.sh

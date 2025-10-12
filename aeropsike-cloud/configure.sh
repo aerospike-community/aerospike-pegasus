@@ -84,3 +84,15 @@ RANGE_QUERY=False
 NORMAL_RANGE=10
 MAX_RANGE=100
 CHANCE_OF_MAX=.01
+
+# ==============================================
+# Grafana/Monitoring Configuration
+# ==============================================
+
+# Grafana Instance Config
+GRAFANA_NAME="${ACS_CLUSTER_NAME}_GRAFANA"
+GRAFANA_INSTANCE_TYPE="t3.xlarge"
+GRAFANA_AWS_EXPIRE="${CLIENT_AWS_EXPIRE}"
+
+# Aerospike Cloud Prometheus Metrics Port
+PROMETHEUS_PORT="9145"

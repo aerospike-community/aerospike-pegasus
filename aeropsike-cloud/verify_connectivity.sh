@@ -74,6 +74,9 @@ if [ $EXIT_CODE -eq 0 ] && [ -n "$DNS_RESULT" ]; then
     IP_COUNT=$(echo "$DNS_RESULT" | grep -E '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | wc -l | tr -d ' ')
     
     if [ "$IP_COUNT" -gt 0 ]; then
+        # Extract IPs as comma-separated list
+        CLUSTER_IPS=$(echo "$DNS_RESULT" | grep -E '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | tr '\n' ',' | sed 's/,$//')
+        
         echo "============================================"
         echo "✓ DNS RESOLUTION: SUCCESS"
         echo "============================================"
@@ -83,6 +86,18 @@ if [ $EXIT_CODE -eq 0 ] && [ -n "$DNS_RESULT" ]; then
             echo "  - ${ip}"
         done
         echo ""
+        
+        # Save cluster IPs to cluster config
+        CLUSTER_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh"
+        if [ -f "$CLUSTER_CONFIG_FILE" ]; then
+            # Check if CLUSTER_IPS is already in the file
+            if ! grep -q "CLUSTER_IPS" "$CLUSTER_CONFIG_FILE"; then
+                echo "export CLUSTER_IPS=\"${CLUSTER_IPS}\"" >> "$CLUSTER_CONFIG_FILE"
+                echo "✓ Cluster IPs saved to: ${CLUSTER_CONFIG_FILE}"
+                echo ""
+            fi
+        fi
+        
         echo "✅ Your client can resolve the cluster hostname!"
         echo ""
         echo "This means:"
