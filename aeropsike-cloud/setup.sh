@@ -293,6 +293,29 @@ wait_for_cluster_active() {
     echo ""
 }
 
+run_db_user_setup() {
+    echo ""
+    echo "============================================"
+    echo "Database User Setup"
+    echo "============================================"
+    echo ""
+    
+    # Check if user already exists
+    if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/db_user.sh" ]; then
+        source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/db_user.sh"
+        if [ -n "$DB_USER_ID" ]; then
+            echo "✓ Database user '${DB_USER}' already configured (ID: ${DB_USER_ID})"
+            echo ""
+            return 0
+        fi
+    fi
+    
+    # Run database user setup
+    . $PREFIX/db_user_setup.sh
+    
+    echo ""
+}
+
 run_vpc_peering_setup() {
     echo ""
     echo "============================================"
@@ -340,6 +363,16 @@ finalize_setup() {
         echo "  Hostname: ${ACS_CLUSTER_HOSTNAME}"
         echo "  TLS Name: ${ACS_CLUSTER_TLSNAME}"
         echo "  Port: ${SERVICE_PORT}"
+    fi
+    
+    # Load and display database user info if exists
+    if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/db_user.sh" ]; then
+        source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/db_user.sh"
+        echo ""
+        echo "Database User:"
+        echo "  Username: ${DB_USER}"
+        echo "  Password: ${DB_PASSWORD}"
+        echo "  Roles: ${DB_USER_ROLES}"
     fi
     echo ""
     
@@ -427,6 +460,11 @@ fi
 # Phase 3: Wait for cluster to become active (if still provisioning)
 if [[ "$CLUSTER_SETUP_PHASE" == "provisioning" ]]; then
     wait_for_cluster_active
+fi
+
+# Phase 3.5: Setup database user (if cluster is active)
+if [[ "$CLUSTER_SETUP_PHASE" == "active" ]]; then
+    run_db_user_setup
 fi
 
 # Phase 4: Resume or start client setup if not complete (cluster is now active)

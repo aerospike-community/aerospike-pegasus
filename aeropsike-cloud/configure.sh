@@ -42,6 +42,10 @@ NAMESPACE_NAME="test"
 NAMESPACE_REPLICATION_FACTOR="2"
 NAMESPACE_COMPRESSION=""  # Optional: none, lz4, snappy, zstd
 
+# Database User Config
+DB_USER="adminas"
+DB_PASSWORD="admin12345"
+
 # ==============================================
 # Client (AWS EC2) Configuration
 # ==============================================
