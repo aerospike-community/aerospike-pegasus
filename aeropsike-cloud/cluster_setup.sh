@@ -159,7 +159,7 @@ EOF
         echo "  TLS Name: ${ACS_CLUSTER_TLSNAME}"
         echo "  Port: 4000"
         echo ""
-        exit 0
+        return 0  # Use return instead of exit when sourced
     elif [[ "${ACS_CLUSTER_STATUS}" == "provisioning" ]]; then
         echo ""
         echo "Cluster is still provisioning."
