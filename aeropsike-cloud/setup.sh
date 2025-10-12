@@ -10,12 +10,14 @@ if [ -f "$STATE_FILE" ]; then
     # Initialize phases if not set (backward compatibility)
     VPC_PEERING_PHASE="${VPC_PEERING_PHASE:-pending}"
     GRAFANA_SETUP_PHASE="${GRAFANA_SETUP_PHASE:-pending}"
+    PROMETHEUS_CONFIG_PHASE="${PROMETHEUS_CONFIG_PHASE:-pending}"
 else
     # Initialize state
     CLUSTER_SETUP_PHASE="pending"     # pending, provisioning, active, complete
     CLIENT_SETUP_PHASE="pending"      # pending, running, complete
     VPC_PEERING_PHASE="pending"       # pending, configured, complete
-    GRAFANA_SETUP_PHASE="pending"     # pending, complete
+    GRAFANA_SETUP_PHASE="pending"     # pending, creating, created, configured, complete
+    PROMETHEUS_CONFIG_PHASE="pending" # pending, complete
 fi
 
 # ============================================
@@ -29,6 +31,7 @@ export CLUSTER_SETUP_PHASE="${CLUSTER_SETUP_PHASE}"
 export CLIENT_SETUP_PHASE="${CLIENT_SETUP_PHASE}"
 export VPC_PEERING_PHASE="${VPC_PEERING_PHASE}"
 export GRAFANA_SETUP_PHASE="${GRAFANA_SETUP_PHASE}"
+export PROMETHEUS_CONFIG_PHASE="${PROMETHEUS_CONFIG_PHASE}"
 EOF
 }
 
@@ -147,40 +150,74 @@ validate_state() {
     fi
     
     # Check if Grafana instance actually exists
-    if [[ "$GRAFANA_SETUP_PHASE" != "pending" ]]; then
-        echo "  Checking Grafana '${GRAFANA_NAME}'..."
-        
-        # Configure aerolab backend
-        aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
-        
-        GRAFANA_EXISTS=$(aerolab client list -j 2>/dev/null | jq -r ".[] | select(.ClientName == \"${GRAFANA_NAME}\") | .ClientName" | head -1)
-        
-        if [ -z "$GRAFANA_EXISTS" ]; then
-            echo "     ⚠️  Grafana instance not found in aerolab (may be deleted)"
+    # ALWAYS check - even if state is "pending" (in case state file was deleted after complete setup)
+    echo "  Checking Grafana '${GRAFANA_NAME}'..."
+    
+    # Configure aerolab backend
+    aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
+    
+    GRAFANA_EXISTS=$(aerolab client list -j 2>/dev/null | jq -r ".[] | select(.ClientName == \"${GRAFANA_NAME}\") | .ClientName" | head -1)
+    
+    if [ -z "$GRAFANA_EXISTS" ]; then
+        # Grafana doesn't exist
+        if [[ "$GRAFANA_SETUP_PHASE" != "pending" ]]; then
+            echo "     ⚠️  Grafana instance not found in aerolab (may have been deleted)"
             echo "     Resetting Grafana state to 'pending'"
             GRAFANA_SETUP_PHASE="pending"
+            PROMETHEUS_CONFIG_PHASE="pending"
             state_changed=true
             rm -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
         else
-            echo "     ✓ Grafana exists: ${GRAFANA_EXISTS}"
-            
-            # Check if config file exists
-            if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
-                if [[ "$GRAFANA_SETUP_PHASE" != "complete" ]]; then
-                    echo "     Updating state: ${GRAFANA_SETUP_PHASE} → complete"
-                    GRAFANA_SETUP_PHASE="complete"
-                    state_changed=true
-                fi
-            else
-                echo "     ⚠️  Grafana config missing, will recreate"
-                if [[ "$GRAFANA_SETUP_PHASE" == "complete" ]]; then
-                    GRAFANA_SETUP_PHASE="pending"
-                    state_changed=true
-                fi
-            fi
+            echo "     ℹ️  No Grafana instance provisioned yet"
         fi
     else
-        echo "  ℹ️  No Grafana instance provisioned yet"
+        # Grafana exists
+        echo "     ✓ Grafana exists: ${GRAFANA_EXISTS}"
+        
+        # If state was pending, check config file to determine actual state
+        if [[ "$GRAFANA_SETUP_PHASE" == "pending" ]]; then
+            if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
+                source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
+                
+                # Check if Prometheus is actually configured (not just the flag)
+                echo "     Checking Prometheus configuration..."
+                PROM_CONFIGURED=$(aerolab client attach -n "${GRAFANA_NAME}" -l 1 -- "grep -q 'job_name: aerospike-cloud' /etc/prometheus/prometheus.yml && echo 'true' || echo 'false'" 2>/dev/null | tr -d '\r\n')
+                
+                if [ "${PROM_CONFIGURED}" == "true" ]; then
+                    echo "     Updating state: pending → complete (found existing setup with Prometheus)"
+                    GRAFANA_SETUP_PHASE="complete"
+                    PROMETHEUS_CONFIG_PHASE="complete"
+                    
+                    # Update config file with the flag
+                    if ! grep -q "PROMETHEUS_CONFIGURED" "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh" 2>/dev/null; then
+                        echo 'export PROMETHEUS_CONFIGURED="true"' >> "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
+                    fi
+                else
+                    echo "     Updating state: pending → created (Prometheus not configured)"
+                    GRAFANA_SETUP_PHASE="created"
+                    PROMETHEUS_CONFIG_PHASE="pending"
+                fi
+                state_changed=true
+            else
+                echo "     Updating state: pending → created"
+                GRAFANA_SETUP_PHASE="created"
+                state_changed=true
+            fi
+        fi
+        
+        # Update state based on current phase
+        if [[ "$GRAFANA_SETUP_PHASE" == "creating" ]]; then
+            echo "     Updating state: creating → created"
+            GRAFANA_SETUP_PHASE="created"
+            state_changed=true
+        fi
+        
+        # Check if Prometheus is configured
+        if [[ "$PROMETHEUS_CONFIG_PHASE" == "complete" ]] && [[ "$GRAFANA_SETUP_PHASE" != "complete" ]]; then
+            echo "     Updating state: ${GRAFANA_SETUP_PHASE} → complete"
+            GRAFANA_SETUP_PHASE="complete"
+            state_changed=true
+        fi
     fi
     
     # Save state if anything changed
@@ -195,10 +232,11 @@ validate_state() {
 
 display_current_state() {
     echo "Current State:"
-    echo "  Cluster:     ${CLUSTER_SETUP_PHASE:-unknown}"
-    echo "  Client:      ${CLIENT_SETUP_PHASE:-unknown}"
-    echo "  VPC Peering: ${VPC_PEERING_PHASE:-pending}"
-    echo "  Grafana:     ${GRAFANA_SETUP_PHASE:-pending}"
+    echo "  Cluster:           ${CLUSTER_SETUP_PHASE:-unknown}"
+    echo "  Client:            ${CLIENT_SETUP_PHASE:-unknown}"
+    echo "  VPC Peering:       ${VPC_PEERING_PHASE:-pending}"
+    echo "  Grafana:           ${GRAFANA_SETUP_PHASE:-pending}"
+    echo "  Prometheus Config: ${PROMETHEUS_CONFIG_PHASE:-pending}"
     echo ""
 }
 
@@ -378,38 +416,58 @@ run_vpc_peering_setup() {
     echo ""
 }
 
-run_grafana_setup() {
+run_grafana_create_instance() {
+    local phase_label="$1"
+    
     echo ""
     echo "============================================"
-    echo "Phase 7: Grafana/Monitoring Setup"
+    echo "Phase ${phase_label}: Grafana Instance Creation"
     echo "============================================"
     echo ""
     
-    # Check if Grafana config exists AND instance actually exists in aerolab
+    # Check if Grafana instance already exists
+    aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
+    GRAFANA_EXISTS=$(aerolab client list -j 2>/dev/null | jq -r ".[] | select(.ClientName == \"${GRAFANA_NAME}\") | .ClientName" | head -1)
+    
+    if [ -n "$GRAFANA_EXISTS" ]; then
+        echo "✓ Grafana instance already exists"
+        GRAFANA_SETUP_PHASE="created"
+        save_state
+        echo ""
+        return 0
+    fi
+    
+    # Run Grafana instance creation
+    . $PREFIX/grafana_create_instance.sh
+    
+    GRAFANA_SETUP_PHASE="created"
+    save_state
+    
+    echo ""
+}
+
+run_prometheus_config() {
+    echo ""
+    echo "============================================"
+    echo "Phase 7: Prometheus Configuration"
+    echo "============================================"
+    echo ""
+    
+    # Check if already configured
     if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
         source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
-        
-        # Verify instance actually exists
-        aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
-        GRAFANA_EXISTS=$(aerolab client list -j 2>/dev/null | jq -r ".[] | select(.ClientName == \"${GRAFANA_NAME}\") | .ClientName" | head -1)
-        
-        if [ -n "$GRAFANA_EXISTS" ]; then
-            echo "✓ Grafana already configured"
-            echo "  Dashboard: ${GRAFANA_URL}"
+        if [ "${PROMETHEUS_CONFIGURED}" == "true" ]; then
+            echo "✓ Prometheus already configured"
+            echo "  Metrics endpoints: ${CLUSTER_METRICS_ENDPOINTS}"
             echo ""
             return 0
-        else
-            echo "⚠️  Grafana config found but instance doesn't exist (may have been deleted)"
-            echo "  Recreating Grafana instance..."
-            echo ""
-            # Clean up stale config
-            rm -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
         fi
     fi
     
-    # Run Grafana setup
-    . $PREFIX/grafana_setup.sh
+    # Run Prometheus configuration
+    . $PREFIX/prometheus_configure.sh
     
+    PROMETHEUS_CONFIG_PHASE="complete"
     GRAFANA_SETUP_PHASE="complete"
     save_state
     
@@ -502,19 +560,33 @@ finalize_setup() {
         echo "Next Steps:"
         echo "  1. Set up VPC peering: ./vpc_peering_setup.sh"
         echo "  2. Verify connectivity: ./verify_connectivity.sh"
-        echo "  3. Setup Grafana: ./grafana_setup.sh"
+        if [[ "$GRAFANA_SETUP_PHASE" == "pending" ]]; then
+            echo "  3. Create Grafana: ./grafana_create_instance.sh"
+        fi
+        if [[ "$GRAFANA_SETUP_PHASE" == "created" ]] || [[ "$GRAFANA_SETUP_PHASE" == "creating" ]]; then
+            echo "  3. Configure Prometheus: ./prometheus_configure.sh"
+        fi
         echo "  4. Build Perseus workload: ./client/buildPerseus.sh"
         echo "  5. Run workload: ./client/runPerseus.sh"
-    elif [[ "$GRAFANA_SETUP_PHASE" != "complete" ]]; then
+    elif [[ "$GRAFANA_SETUP_PHASE" == "pending" ]]; then
         echo "Next Steps:"
-        echo "  1. Setup Grafana: ./grafana_setup.sh"
+        echo "  1. Create Grafana: ./grafana_create_instance.sh"
+        echo "  2. Configure Prometheus: ./prometheus_configure.sh"
+        echo "  3. Build Perseus workload: ./client/buildPerseus.sh"
+        echo "  4. Run workload: ./client/runPerseus.sh"
+    elif [[ "$GRAFANA_SETUP_PHASE" == "created" ]] || [[ "$PROMETHEUS_CONFIG_PHASE" != "complete" ]]; then
+        echo "Next Steps:"
+        echo "  1. Configure Prometheus: ./prometheus_configure.sh"
         echo "  2. Build Perseus workload: ./client/buildPerseus.sh"
         echo "  3. Run workload: ./client/runPerseus.sh"
     else
         echo "Next Steps:"
         echo "  1. Build Perseus workload: ./client/buildPerseus.sh"
         echo "  2. Run workload: ./client/runPerseus.sh"
-        echo "  3. View metrics: ${GRAFANA_URL}"
+        if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
+            source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
+            echo "  3. View metrics: ${GRAFANA_URL}"
+        fi
         
         # Offer to run connectivity verification if not done
         if [ ! -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh" ] || ! grep -q "CLUSTER_IPS" "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh" 2>/dev/null; then
@@ -556,6 +628,16 @@ if [[ "$CLUSTER_SETUP_PHASE" == "provisioning" ]] && [[ "$CLIENT_SETUP_PHASE" !=
     run_client_setup "2 (Parallel)"
 fi
 
+# Phase 2.5: Start Grafana instance creation in parallel (if cluster is provisioning and Grafana not created)
+if [[ "$CLUSTER_SETUP_PHASE" == "provisioning" ]] && [[ "$GRAFANA_SETUP_PHASE" == "pending" ]]; then
+    # Only create Grafana if client setup has started or completed (need client VPC)
+    if [[ "$CLIENT_SETUP_PHASE" != "pending" ]]; then
+        run_grafana_create_instance "2.5 (Parallel)"
+        GRAFANA_SETUP_PHASE="creating"
+        save_state
+    fi
+fi
+
 # Phase 3: Wait for cluster to become active (if still provisioning)
 if [[ "$CLUSTER_SETUP_PHASE" == "provisioning" ]]; then
     wait_for_cluster_active
@@ -591,23 +673,39 @@ if [[ "$CLUSTER_SETUP_PHASE" == "active" ]] && [[ "$CLIENT_SETUP_PHASE" == "comp
     fi
 fi
 
-# Phase 6: Setup Grafana (if VPC peering is complete and Grafana not done)
-if [[ "$CLUSTER_SETUP_PHASE" == "active" ]] && [[ "$CLIENT_SETUP_PHASE" == "complete" ]] && [[ "$VPC_PEERING_PHASE" == "complete" ]] && [[ "$GRAFANA_SETUP_PHASE" == "pending" ]]; then
+# Phase 6: Create Grafana instance if not done yet (after client is complete)
+if [[ "$CLUSTER_SETUP_PHASE" == "active" ]] && [[ "$CLIENT_SETUP_PHASE" == "complete" ]] && [[ "$GRAFANA_SETUP_PHASE" == "pending" ]]; then
     # Ask if user wants to set up Grafana
     echo ""
-    read -p "Would you like to set up Grafana/Monitoring now? [Y/n]: " -n 1 -r
+    read -p "Would you like to create Grafana instance now? [Y/n]: " -n 1 -r
     echo ""
     
     if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
-        run_grafana_setup
+        run_grafana_create_instance "6"
     else
-        echo "Skipping Grafana setup. You can run it later with:"
-        echo "  ./grafana_setup.sh"
+        echo "Skipping Grafana creation. You can run it later with:"
+        echo "  ./grafana_create_instance.sh"
         echo ""
     fi
 fi
 
-# Phase 7: Final setup complete
+# Phase 7: Configure Prometheus (after VPC peering and Grafana are ready)
+if [[ "$CLUSTER_SETUP_PHASE" == "active" ]] && [[ "$CLIENT_SETUP_PHASE" == "complete" ]] && [[ "$VPC_PEERING_PHASE" == "complete" ]] && [[ "$GRAFANA_SETUP_PHASE" == "created" ]] && [[ "$PROMETHEUS_CONFIG_PHASE" == "pending" ]]; then
+    # Ask if user wants to configure Prometheus
+    echo ""
+    read -p "Would you like to configure Prometheus for cluster monitoring now? [Y/n]: " -n 1 -r
+    echo ""
+    
+    if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+        run_prometheus_config
+    else
+        echo "Skipping Prometheus configuration. You can run it later with:"
+        echo "  ./prometheus_configure.sh"
+        echo ""
+    fi
+fi
+
+# Phase 8: Final setup complete
 if [[ "$CLUSTER_SETUP_PHASE" == "active" ]] && [[ "$CLIENT_SETUP_PHASE" == "complete" ]]; then
     finalize_setup
 fi
