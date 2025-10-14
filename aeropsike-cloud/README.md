@@ -23,7 +23,7 @@ CLOUD_REGION="ap-south-1"            # AWS region
 INSTANCE_TYPE="i4i.large"            # Instance type
 
 # TLS Configuration
-ENABLE_TLS="false"                   # false = port 3000, true = port 4000
+ENABLE_TLS="true"                    # true = port 4000 (TLS), false = port 3000 (non-TLS)
 
 # Namespace
 NAMESPACE_NAME="test"
@@ -51,7 +51,35 @@ This will:
 - Create client instances
 - Build and run Perseus benchmarking tool
 
-**Note**: Full setup takes 15-20 minutes.
+**Note**: Full setup takes 15-30 minutes.
+
+## Script Idempotency
+
+All setup scripts are **idempotent** - you can safely run them multiple times:
+
+- **Cluster Setup**: Checks if cluster exists before creating. If it exists, retrieves connection details and continues.
+- **VPC Peering**: Verifies existing peering before creating new connections. Skips if already configured.
+- **Client Setup**: Checks if client instances exist. Re-uses existing instances if found.
+- **Perseus Build**: Rebuilds only if source changed. Safe to re-run after failures.
+
+**Benefits**:
+- Resume interrupted setups without cleanup
+- Update configurations by re-running scripts
+- No risk of creating duplicate resources
+- Safe to use in automation/CI pipelines
+
+**State Management**: The setup system maintains state for each resource in `~/.aerospike-cloud/`. On every run, it checks the actual state of each component (cluster, VPC peering, client instances) and updates the local state accordingly. This intelligent state tracking means:
+
+- If setup is interrupted at any point, re-running `./setup.sh` will resume from where it left off
+- Scripts detect resources deleted outside the automation (e.g., manual deletion of client/grafana/cluster etc )
+- State files are automatically synchronized with the actual cloud resources
+- You can safely run setup scripts even after network failures or timeouts
+
+**Example**: If cluster creation succeeds but VPC peering fails due to a network issue, simply re-run `./setup.sh`. The script will:
+1. Detect the existing cluster and retrieve its details
+2. Skip cluster creation entirely
+3. Continue with VPC peering setup
+4. Proceed with remaining components
 
 ### 4. Individual Components
 
@@ -110,42 +138,3 @@ This removes:
 - Client instances
 - Grafana instance
 - VPC peering connections
-
-## Troubleshooting
-
-### Perseus won't connect
-- Check VPC peering: `nc -zv <cluster-ip> 4000`
-- Verify DNS resolution: `dig +short <cluster-hostname>`
-- Check TLS certificate is present (if using port 4000)
-
-### Cluster not found
-```bash
-# Re-authenticate
-./api-scripts/get-token.sh
-
-# List clusters
-curl -s "${REST_API_URI}" -H "@${ACS_AUTH_HEADER}" | jq '.databases[].name'
-```
-
-### Client connectivity issues
-- Ensure VPC peering is active in Aerospike Cloud console
-- Check security groups allow traffic from client VPC CIDR
-
-## Files Overview
-
-```
-aeropsike-cloud/
-├── setup.sh                    # Complete setup workflow
-├── configure.sh                # Main configuration file
-├── cluster_setup.sh            # Create Aerospike Cloud cluster
-├── vpc_peering_setup.sh        # Setup VPC peering
-├── destroy.sh                  # Clean up all resources
-└── api-scripts/               # API helper scripts
-```
-
-## Support
-
-For issues or questions:
-- [Aerospike Cloud Documentation](https://docs.aerospike.com/cloud)
-- [Aerospike Community Forums](https://discuss.aerospike.com)
-
