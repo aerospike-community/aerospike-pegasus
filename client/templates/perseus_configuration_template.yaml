@@ -2,12 +2,13 @@ aerospikeConfiguration:
   hosts:
     -
       ip: "_IP_"
-      port: 3000
-  username: ""
-  password: ""
+      port: _PORT_
+  username: "_USERNAME_"
+  password: "_PASSWORD_"
   namespace: "_NAMESPACE_NAME_"
   set: "test"
   truncateSet: _TRUNCATE_SET_
+  tlsPath: "/root/.aerospike/truststore.jks"
 outputWindowConfiguration:
   printIntervalSec: 1
   numberOfLinesBeforeReprintingTheHeader: 25

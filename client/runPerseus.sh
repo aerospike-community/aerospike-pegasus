@@ -1,13 +1,82 @@
-echo "Uploading Perseus Configuration"
-aerolab files upload -c -n ${CLIENT_NAME} $PREFIX"/../client/templates/perseus.sh" /root/perseus.sh || exit 1
+#!/bin/bash
 
-nip=$(aerolab cluster list -i |grep -A7 ${CLUSTER_NAME} | head -1 | grep -E -o 'int_ip=.{0,15}' | egrep -o '([0-9]{1,3}\.){3}[0-9]{1,3}' )
+# Load configuration
+if [ -z "$PREFIX" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    PREFIX="${SCRIPT_DIR}/../aeropsike-cloud"
+    . $PREFIX/configure.sh
+fi
+
+echo "Uploading Perseus Configuration"
+
+# Configure aerolab backend
+aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
+
+# Upload TLS certificate if it exists
+CLUSTER_CONFIG="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh"
+TLS_CERT_PATH="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/ca.pem"
+if [ -f "$TLS_CERT_PATH" ]; then
+    echo "Uploading TLS certificate..."
+    aerolab files upload -c -n ${CLIENT_NAME} "$TLS_CERT_PATH" /root/ca.pem || exit 1
+    aerolab files upload -c -n ${CLIENT_NAME} "${SCRIPT_DIR}/templates/setup_tls.sh" /root/setup_tls.sh || exit 1
+    aerolab client attach -n ${CLIENT_NAME} -l all --parallel -- bash /root/setup_tls.sh
+fi
+
+aerolab files upload -c -n ${CLIENT_NAME} "${SCRIPT_DIR}/templates/perseus.sh" /root/perseus.sh || exit 1
+
+# Get cluster configuration from Aerospike Cloud
+if [ -f "${ACS_CONFIG_DIR}/current_cluster.sh" ]; then
+    source "${ACS_CONFIG_DIR}/current_cluster.sh"
+    
+    # Load cluster config
+    CLUSTER_CONFIG="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh"
+    if [ -f "$CLUSTER_CONFIG" ]; then
+        source "$CLUSTER_CONFIG"
+        
+        # For TLS connections (port 4000), use the hostname
+        # For non-TLS connections (port 3000), use the IP
+        if [ "$SERVICE_PORT" == "4000" ]; then
+            nip="${ACS_CLUSTER_HOSTNAME}"
+            echo "Using cluster hostname (TLS): ${nip}"
+        else
+            # Use first IP from CLUSTER_IPS for non-TLS
+            nip=$(echo "$CLUSTER_IPS" | cut -d',' -f1)
+            echo "Using cluster IP (non-TLS): ${nip}"
+        fi
+    else
+        echo "❌ ERROR: Cluster configuration not found!"
+        exit 1
+    fi
+    
+    # Load database user credentials
+    DB_USER_CONFIG="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/db_user.sh"
+    if [ -f "$DB_USER_CONFIG" ]; then
+        source "$DB_USER_CONFIG"
+        echo "Using DB user: ${DB_USER}"
+    else
+        echo "❌ ERROR: Database user configuration not found!"
+        exit 1
+    fi
+else
+    echo "❌ ERROR: Cluster not configured!"
+    exit 1
+fi
+
+# Set Aerospike Cloud connection parameters
+AEROSPIKE_PORT="${SERVICE_PORT}"  # Will be 3000 for non-TLS or 4000 for TLS
+AEROSPIKE_TLS_NAME="${ACS_CLUSTER_TLSNAME}"
+AEROSPIKE_USERNAME="${DB_USER}"
+AEROSPIKE_PASSWORD="${DB_PASSWORD}"
 
 for (( i=1; i  <= ${CLIENT_NUMBER_OF_NODES}; i++ ))
   do
-    Perseus_Conf=$PREFIX"/../client/templates/perseus_configuration_template.yaml"
+    Perseus_Conf="${SCRIPT_DIR}/templates/perseus_configuration_template.yaml"
     sed "s/_NAMESPACE_NAME_/${NAMESPACE_NAME}/g" ${Perseus_Conf} | \
     sed "s/_IP_/${nip}/g" | \
+    sed "s/_PORT_/${AEROSPIKE_PORT}/g" | \
+    sed "s/_USERNAME_/${AEROSPIKE_USERNAME}/g" | \
+    sed "s/_PASSWORD_/${AEROSPIKE_PASSWORD}/g" | \
+    sed "s/_TLS_NAME_/${AEROSPIKE_TLS_NAME}/g" | \
     sed "s/_STRING_INDEX_/${STRING_INDEX}/g" | \
     sed "s/_NUMERIC_INDEX_/${NUMERIC_INDEX}/g"| \
     sed "s/_GEO_SPATIAL_INDEX_/${GEO_SPATIAL_INDEX}/g" | \
@@ -34,7 +103,7 @@ sleep 5
 
 for (( i=1; i  <= ${CLIENT_NUMBER_OF_NODES}; i++ ))
   do
-    echo ". "$PREFIX"/configure.sh\naerolab client attach -n "${CLIENT_NAME}" -l "${i}" -- tail -f out.log" > "term"${i}".sh"
+    echo ". \"${PREFIX}\"/configure.sh\naerolab client attach -n \"${CLIENT_NAME}\" -l \"${i}\" -- tail -f out.log" > "term"${i}".sh"
     chmod 744 "term"${i}".sh"
     open -a iTerm "term"${i}".sh"
     sleep 3

@@ -19,6 +19,18 @@ build
 *.tgz
 target
 
+# Aerospike Cloud API Keys and Credentials (SENSITIVE!)
+aerospike-cloud-apikey-*.csv
+aeropsike-cloud-apikey-*.csv
+*apikey*.csv
+cloudapikeys
+.aerospike-cloud/
+credentials.conf
+*.pem
+*.jks
+ca.pem
+truststore.jks
+
 # AWS User-specific
 .idea/**/aws.xml
 

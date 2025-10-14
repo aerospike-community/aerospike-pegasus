@@ -6,5 +6,5 @@ then
     sudo kill -9 $PID
 fi
 
-java -Xmx6g -jar /root/aerospike-perseus/target/perseus-1.0-SNAPSHOT-jar-with-dependencies.jar &> /root/out.log &
+java -Xmx6g -jar /root/aerospike-perseus/target/perseus-1.0-SNAPSHOT-jar-with-dependencies.jar /root/configuration.yaml &> /root/out.log &
 disown -r
