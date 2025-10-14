@@ -10,8 +10,8 @@ if [[ -z "${ACS_CLUSTER_ID}" ]]; then
   exit 1
 fi
 
-if ! [[ -d "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}" ]]; then
-  echo "cluster config directory ${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID} not found, exiting..."
+if ! [[ -d "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}" ]]; then
+  echo "cluster config directory ${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID} not found, exiting..."
   exit 1
 fi
 
@@ -90,7 +90,7 @@ echo ""
 PEERING_ID=$(acs_get_vpc_peering_json "${ACS_CLUSTER_ID}" | jq -r ".vpcPeerings[0].peeringId")
 ZONE_ID=$(acs_get_vpc_peering_json "${ACS_CLUSTER_ID}" | jq -r ".vpcPeerings[0].privateHostedZoneId")
 
-cat << EOF > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/vpc_config.sh"
+cat << EOF > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/vpc_config.sh"
 export PEERING_ID="${PEERING_ID}"
 export ZONE_ID="${ZONE_ID}"
 EOF

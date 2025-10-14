@@ -3,8 +3,23 @@
 PREFIX=$(pwd "$0")"/"$(dirname "$0")
 . $PREFIX/configure.sh
 
-# Load state if exists
-STATE_FILE="${ACS_CONFIG_DIR}/setup_state.sh"
+# State file is now cluster-specific to allow multiple clusters
+STATE_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/setup_state.sh"
+
+# Check if switching to a different cluster
+if [ -f "${ACS_CONFIG_DIR}/current_cluster.sh" ]; then
+    source "${ACS_CONFIG_DIR}/current_cluster.sh"
+    CURRENT_CLUSTER_NAME_FROM_STATE="${ACS_CLUSTER_NAME:-}"
+    # Reload configure.sh to get the configured cluster name
+    . $PREFIX/configure.sh
+    
+    if [ -n "$CURRENT_CLUSTER_NAME_FROM_STATE" ] && [ "$CURRENT_CLUSTER_NAME_FROM_STATE" != "$ACS_CLUSTER_NAME" ]; then
+        echo "ℹ️  Switching from cluster '${CURRENT_CLUSTER_NAME_FROM_STATE}' to '${ACS_CLUSTER_NAME}'"
+        echo ""
+    fi
+fi
+
+# Load state if exists for current cluster
 if [ -f "$STATE_FILE" ]; then
     source "$STATE_FILE"
     # Initialize phases if not set (backward compatibility)
@@ -12,13 +27,18 @@ if [ -f "$STATE_FILE" ]; then
     GRAFANA_SETUP_PHASE="${GRAFANA_SETUP_PHASE:-pending}"
     PROMETHEUS_CONFIG_PHASE="${PROMETHEUS_CONFIG_PHASE:-pending}"
     PERSEUS_BUILD_PHASE="${PERSEUS_BUILD_PHASE:-pending}"
+    
+    # Backward compatibility: convert old Grafana states to simplified model
+    if [[ "$GRAFANA_SETUP_PHASE" == "creating" ]] || [[ "$GRAFANA_SETUP_PHASE" == "created" ]] || [[ "$GRAFANA_SETUP_PHASE" == "configured" ]]; then
+        GRAFANA_SETUP_PHASE="complete"
+    fi
 else
     # Initialize state
     CLUSTER_SETUP_PHASE="pending"     # pending, provisioning, active, complete
     CLIENT_SETUP_PHASE="pending"      # pending, running, complete
-    VPC_PEERING_PHASE="pending"       # pending, configured, complete
-    GRAFANA_SETUP_PHASE="pending"     # pending, creating, created, configured, complete
-    PROMETHEUS_CONFIG_PHASE="pending" # pending, complete
+    VPC_PEERING_PHASE="pending"       # pending, complete
+    GRAFANA_SETUP_PHASE="pending"     # pending, complete (instance exists)
+    PROMETHEUS_CONFIG_PHASE="pending" # pending, complete (configured to scrape cluster)
     PERSEUS_BUILD_PHASE="pending"     # pending, complete
 fi
 
@@ -27,7 +47,7 @@ fi
 # ============================================
 
 save_state() {
-    mkdir -p "${ACS_CONFIG_DIR}"
+    mkdir -p "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}"
     cat > "$STATE_FILE" <<EOF
 export CLUSTER_SETUP_PHASE="${CLUSTER_SETUP_PHASE}"
 export CLIENT_SETUP_PHASE="${CLIENT_SETUP_PHASE}"
@@ -57,8 +77,31 @@ validate_state() {
         if [ -z "$ACTUAL_STATUS" ]; then
             echo "  ⚠️  Cluster not found in API (may be deleted)"
             if [[ "$CLUSTER_SETUP_PHASE" != "pending" ]]; then
-                echo "     Resetting cluster state to 'pending'"
+                echo "     Cluster has been deleted, resetting all dependent states..."
                 CLUSTER_SETUP_PHASE="pending"
+                
+                # Reset all dependent phases since cluster is gone
+                if [[ "$VPC_PEERING_PHASE" != "pending" ]]; then
+                    echo "     Resetting VPC peering state (peering removed with cluster)"
+                    VPC_PEERING_PHASE="pending"
+                fi
+                
+                # Grafana instance stays, but Prometheus needs reconfiguration
+                if [[ "$PROMETHEUS_CONFIG_PHASE" != "pending" ]]; then
+                    echo "     Resetting Prometheus state (metrics endpoints changed)"
+                    PROMETHEUS_CONFIG_PHASE="pending"
+                                    # Grafana instance itself is still fine, only Prometheus config needs updating
+                fi
+                
+                # Perseus build stays (JAR is generic, cluster details provided at runtime)
+                # No need to rebuild Perseus
+                
+                # Clean up stale cluster config files
+                if [ -d "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}" ]; then
+                    echo "     Removing stale cluster config files..."
+                    rm -rf "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}"
+                fi
+                
                 state_changed=true
                 rm -f "${ACS_CONFIG_DIR}/current_cluster.sh"
             fi
@@ -66,20 +109,61 @@ validate_state() {
             echo "     API Status: ${ACTUAL_STATUS}"
             
             # Update state based on actual status
-            if [ "$ACTUAL_STATUS" == "active" ]; then
-                if [ "$CLUSTER_SETUP_PHASE" != "active" ]; then
-                    echo "     Updating state: ${CLUSTER_SETUP_PHASE} → active"
-                    CLUSTER_SETUP_PHASE="active"
-                    state_changed=true
+            if [ "$CLUSTER_SETUP_PHASE" != "$ACTUAL_STATUS" ] && [[ "$ACTUAL_STATUS" == "active" || "$ACTUAL_STATUS" == "provisioning" ]]; then
+                echo "     Updating state: ${CLUSTER_SETUP_PHASE} → ${ACTUAL_STATUS}"
+                CLUSTER_SETUP_PHASE="$ACTUAL_STATUS"
+                state_changed=true
+            fi
+            
+            # Sync cluster config file with API data (use API as source of truth)
+            echo "     Syncing cluster config with API data..."
+            ACS_CLUSTER_HOSTNAME=$(acs_get_cluster_hostname "${ACS_CLUSTER_ID}" 2>/dev/null)
+            ACS_CLUSTER_TLSNAME=$(acs_get_cluster_tls_name "${ACS_CLUSTER_ID}" 2>/dev/null)
+            
+            # Create/update cluster config file
+            mkdir -p "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}"
+            
+            if [ "$ACTUAL_STATUS" == "active" ] && [ -n "$ACS_CLUSTER_HOSTNAME" ]; then
+                # Cluster is active, get full details
+                
+                # Try to resolve cluster IPs if client and VPC peering exist
+                CLUSTER_IPS=""
+                if [ -f "${CLIENT_CONFIG_DIR}/client_config.sh" ] && [[ "$VPC_PEERING_PHASE" == "complete" ]]; then
+                    source "${CLIENT_CONFIG_DIR}/client_config.sh"
+                    aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
+                    DNS_OUTPUT=$(aerolab client attach -n "${CLIENT_NAME}" -l 1 -- "dig +short ${ACS_CLUSTER_HOSTNAME}" 2>&1)
+                    CLUSTER_IPS=$(echo "$DNS_OUTPUT" | grep -E '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | tr '\n' ',' | sed 's/,$//')
                 fi
+                
+                # Write full cluster config
+                cat > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh" <<EOF
+export ACS_CLUSTER_ID="${ACS_CLUSTER_ID}"
+export ACS_CLUSTER_NAME="${ACS_CLUSTER_NAME}"
+export ACS_CLUSTER_STATUS="active"
+export ACS_CLUSTER_HOSTNAME="${ACS_CLUSTER_HOSTNAME}"
+export ACS_CLUSTER_TLSNAME="${ACS_CLUSTER_TLSNAME}"
+export SERVICE_PORT=4000
+EOF
+                
+                # Add cluster IPs if resolved
+                if [ -n "$CLUSTER_IPS" ]; then
+                    echo "export CLUSTER_IPS=\"${CLUSTER_IPS}\"" >> "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh"
+                    echo "     ✓ Cluster config synced (IPs: ${CLUSTER_IPS})"
+                else
+                    echo "     ✓ Cluster config synced (IPs pending VPC peering)"
+                fi
+                
+                state_changed=true
             elif [ "$ACTUAL_STATUS" == "provisioning" ]; then
-                if [ "$CLUSTER_SETUP_PHASE" != "provisioning" ]; then
-                    echo "     Updating state: ${CLUSTER_SETUP_PHASE} → provisioning"
-                    CLUSTER_SETUP_PHASE="provisioning"
-                    state_changed=true
-                fi
-            else
-                echo "     Current state: ${CLUSTER_SETUP_PHASE}"
+                # Cluster is provisioning, create basic config
+                cat > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh" <<EOF
+export ACS_CLUSTER_ID="${ACS_CLUSTER_ID}"
+export ACS_CLUSTER_NAME="${ACS_CLUSTER_NAME}"
+export ACS_CLUSTER_STATUS="provisioning"
+# Connection details will be added when cluster becomes active
+EOF
+                echo "     ✓ Cluster config updated (provisioning)"
+                state_changed=true
             fi
         fi
     else
@@ -133,7 +217,7 @@ validate_state() {
     if [ -f "${ACS_CONFIG_DIR}/current_cluster.sh" ]; then
         source "${ACS_CONFIG_DIR}/current_cluster.sh"
         
-        if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/vpc_peering.sh" ]; then
+        if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/vpc_peering.sh" ]; then
             if [[ "$VPC_PEERING_PHASE" != "complete" ]]; then
                 echo "  ℹ️  VPC peering config found, updating state"
                 VPC_PEERING_PHASE="complete"
@@ -169,7 +253,7 @@ validate_state() {
             GRAFANA_SETUP_PHASE="pending"
             PROMETHEUS_CONFIG_PHASE="pending"
             state_changed=true
-            rm -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
+            rm -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh"
         else
             echo "     ℹ️  No Grafana instance provisioned yet"
         fi
@@ -177,49 +261,72 @@ validate_state() {
         # Grafana exists
         echo "     ✓ Grafana exists: ${GRAFANA_EXISTS}"
         
-        # If state was pending, check config file to determine actual state
-        if [[ "$GRAFANA_SETUP_PHASE" == "pending" ]]; then
-            if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
-                source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
+        # Check if config file exists, create if missing (regardless of state)
+        if [ ! -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
+            echo "     ⚠️  Config file missing, extracting Grafana details..."
+            
+            # Extract Grafana details from aerolab
+            GRAFANA_DETAILS=$(aerolab client list -j 2>/dev/null | jq -r ".[] | select(.ClientName == \"${GRAFANA_NAME}\")")
+            
+            if [ -n "$GRAFANA_DETAILS" ]; then
+                GRAFANA_IP=$(echo "$GRAFANA_DETAILS" | jq -r '.PublicIp')
+                GRAFANA_PRIVATE_IP=$(echo "$GRAFANA_DETAILS" | jq -r '.PrivateIp')
+                GRAFANA_INSTANCE_ID=$(echo "$GRAFANA_DETAILS" | jq -r '.InstanceId')
                 
-                # Check if Prometheus is actually configured (not just the flag)
-                echo "     Checking Prometheus configuration..."
-                PROM_CONFIGURED=$(aerolab client attach -n "${GRAFANA_NAME}" -l 1 -- "grep -q 'job_name: aerospike-cloud' /etc/prometheus/prometheus.yml && echo 'true' || echo 'false'" 2>/dev/null | tr -d '\r\n')
+                # Create the missing config file
+                mkdir -p "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}"
+                cat > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh" <<EOF
+export GRAFANA_NAME="${GRAFANA_NAME}"
+export GRAFANA_IP="${GRAFANA_IP}"
+export GRAFANA_PRIVATE_IP="${GRAFANA_PRIVATE_IP}"
+export GRAFANA_INSTANCE_ID="${GRAFANA_INSTANCE_ID}"
+export GRAFANA_URL="http://${GRAFANA_IP}:3000"
+EOF
                 
-                if [ "${PROM_CONFIGURED}" == "true" ]; then
-                    echo "     Updating state: pending → complete (found existing setup with Prometheus)"
-                    GRAFANA_SETUP_PHASE="complete"
-                    PROMETHEUS_CONFIG_PHASE="complete"
-                    
-                    # Update config file with the flag
-                    if ! grep -q "PROMETHEUS_CONFIGURED" "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh" 2>/dev/null; then
-                        echo 'export PROMETHEUS_CONFIGURED="true"' >> "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
-                    fi
-                else
-                    echo "     Updating state: pending → created (Prometheus not configured)"
-                    GRAFANA_SETUP_PHASE="created"
-                    PROMETHEUS_CONFIG_PHASE="pending"
-                fi
+                echo "     ✓ Created grafana_config.sh with extracted details"
                 state_changed=true
             else
-                echo "     Updating state: pending → created"
-                GRAFANA_SETUP_PHASE="created"
-                state_changed=true
+                echo "     ❌ Failed to extract Grafana details from aerolab"
             fi
         fi
         
-        # Update state based on current phase
-        if [[ "$GRAFANA_SETUP_PHASE" == "creating" ]]; then
-            echo "     Updating state: creating → created"
-            GRAFANA_SETUP_PHASE="created"
-            state_changed=true
-        fi
-        
-        # Check if Prometheus is configured
-        if [[ "$PROMETHEUS_CONFIG_PHASE" == "complete" ]] && [[ "$GRAFANA_SETUP_PHASE" != "complete" ]]; then
-            echo "     Updating state: ${GRAFANA_SETUP_PHASE} → complete"
-            GRAFANA_SETUP_PHASE="complete"
-            state_changed=true
+        # If state was pending, check config file to determine actual state
+        if [[ "$GRAFANA_SETUP_PHASE" == "pending" ]]; then
+            if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
+                echo "     Grafana config exists, updating state: pending → complete"
+                GRAFANA_SETUP_PHASE="complete"
+                state_changed=true
+            else
+                # Config file missing, extract details from aerolab and create it
+                echo "     ⚠️  Config file missing, extracting Grafana details..."
+                
+                # Extract Grafana details from aerolab
+                GRAFANA_DETAILS=$(aerolab client list -j 2>/dev/null | jq -r ".[] | select(.ClientName == \"${GRAFANA_NAME}\")")
+                
+                if [ -n "$GRAFANA_DETAILS" ]; then
+                    GRAFANA_IP=$(echo "$GRAFANA_DETAILS" | jq -r '.PublicIp')
+                    GRAFANA_PRIVATE_IP=$(echo "$GRAFANA_DETAILS" | jq -r '.PrivateIp')
+                    GRAFANA_INSTANCE_ID=$(echo "$GRAFANA_DETAILS" | jq -r '.InstanceId')
+                    
+                    # Create the missing config file
+                    mkdir -p "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}"
+                    cat > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh" <<EOF
+export GRAFANA_NAME="${GRAFANA_NAME}"
+export GRAFANA_IP="${GRAFANA_IP}"
+export GRAFANA_PRIVATE_IP="${GRAFANA_PRIVATE_IP}"
+export GRAFANA_INSTANCE_ID="${GRAFANA_INSTANCE_ID}"
+export GRAFANA_URL="http://${GRAFANA_IP}:3000"
+EOF
+                    
+                    echo "     ✓ Created grafana_config.sh with extracted details"
+                    echo "     Updating state: pending → complete"
+                    GRAFANA_SETUP_PHASE="complete"
+                else
+                    echo "     ❌ Failed to extract Grafana details from aerolab"
+                fi
+                
+                state_changed=true
+            fi
         fi
     fi
     
@@ -228,8 +335,8 @@ validate_state() {
         echo "  Checking Prometheus configuration..."
         
         # Load Grafana config to get GRAFANA_NAME
-        if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
-            source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
+        if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
+            source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh"
         fi
         
         # Check if Prometheus is actually configured
@@ -240,15 +347,12 @@ validate_state() {
                 echo "     ✓ Prometheus is configured (updating state)"
                 PROMETHEUS_CONFIG_PHASE="complete"
                 
-                # Also update Grafana state to complete if not already
-                if [[ "$GRAFANA_SETUP_PHASE" != "complete" ]]; then
-                    GRAFANA_SETUP_PHASE="complete"
-                fi
+                # Grafana phase is independent and doesn't change based on Prometheus
                 
                 # Update config file with the flag
-                if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
-                    if ! grep -q "PROMETHEUS_CONFIGURED" "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh" 2>/dev/null; then
-                        echo 'export PROMETHEUS_CONFIGURED="true"' >> "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
+                if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
+                    if ! grep -q "PROMETHEUS_CONFIGURED" "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh" 2>/dev/null; then
+                        echo 'export PROMETHEUS_CONFIGURED="true"' >> "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh"
                     fi
                 fi
                 
@@ -264,6 +368,36 @@ validate_state() {
                 state_changed=true
             else
                 echo "     ℹ️  Prometheus not configured yet"
+            fi
+        fi
+    fi
+    
+    # Check if database user exists
+    if [ -f "${ACS_CONFIG_DIR}/current_cluster.sh" ]; then
+        source "${ACS_CONFIG_DIR}/current_cluster.sh"
+        
+        if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/db_user.sh" ]; then
+            echo "  Checking database user..."
+            source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/db_user.sh"
+            
+            # Verify user still exists in API
+            . $PREFIX/api-scripts/common.sh
+            EXISTING_USER=$(curl -sX GET \
+                "${REST_API_URI}/${ACS_CLUSTER_ID}/credentials" \
+                -H "@${ACS_AUTH_HEADER}" 2>/dev/null | \
+                jq -r ".credentials[] | select(.name == \"${DB_USER}\") | .id" 2>/dev/null)
+            
+            if [ -n "$EXISTING_USER" ] && [ "$EXISTING_USER" != "null" ]; then
+                echo "     ✓ Database user '${DB_USER}' exists (ID: ${EXISTING_USER})"
+            else
+                echo "     ⚠️  Database user '${DB_USER}' not found in API (may have been deleted)"
+                echo "     Removing stale config file"
+                rm -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/db_user.sh"
+                state_changed=true
+            fi
+        else
+            if [[ "$CLUSTER_SETUP_PHASE" == "active" ]]; then
+                echo "  ℹ️  Database user not configured yet"
             fi
         fi
     fi
@@ -318,6 +452,109 @@ display_current_state() {
     echo "  Grafana:           ${GRAFANA_SETUP_PHASE:-pending}"
     echo "  Prometheus Config: ${PROMETHEUS_CONFIG_PHASE:-pending}"
     echo "  Perseus Build:     ${PERSEUS_BUILD_PHASE:-pending}"
+    echo ""
+}
+
+validate_and_refresh_token() {
+    echo "============================================"
+    echo "Validating Authentication Token"
+    echo "============================================"
+    echo ""
+    
+    # Check if credentials config file exists
+    if [ ! -f "${ACS_CONFIG_DIR}/credentials.conf" ]; then
+        echo "⚠️  Credentials config file not found. Looking for API key CSV file..."
+        
+        # Look for API key CSV file in multiple locations
+        API_KEY_FILE=""
+        
+        if [ -d "${ACS_CONFIG_DIR}/credentials" ]; then
+            API_KEY_FILE=$(find ${ACS_CONFIG_DIR}/credentials -maxdepth 1 -name "aerospike-cloud-apikey-*.csv" 2>/dev/null | head -n 1)
+        fi
+        
+        if [ -z "$API_KEY_FILE" ]; then
+            API_KEY_FILE=$(find ${ACS_CONFIG_DIR} -maxdepth 1 -name "aerospike-cloud-apikey-*.csv" 2>/dev/null | head -n 1)
+        fi
+        
+        if [ -z "$API_KEY_FILE" ]; then
+            API_KEY_FILE=$(find $PREFIX/.. -maxdepth 1 -name "aerospike-cloud-apikey-*.csv" 2>/dev/null | head -n 1)
+        fi
+        
+        if [ -n "$API_KEY_FILE" ]; then
+            echo "✓ Found API key file: $API_KEY_FILE"
+            
+            # Extract client_id and client_secret from CSV (skip header line)
+            CLIENT_ID=$(tail -n 1 "$API_KEY_FILE" | cut -d',' -f2)
+            CLIENT_SECRET=$(tail -n 1 "$API_KEY_FILE" | cut -d',' -f3)
+            
+            # Create credentials config file
+            mkdir -p "${ACS_CONFIG_DIR}"
+            cat > "${ACS_CONFIG_DIR}/credentials.conf" <<EOF
+# Aerospike Cloud Credentials
+# Generated from API key CSV file: $(basename "$API_KEY_FILE")
+ACS_CLIENT_ID="${CLIENT_ID}"
+ACS_CLIENT_SECRET="${CLIENT_SECRET}"
+EOF
+            
+            echo "✓ Credentials config file created at ${ACS_CONFIG_DIR}/credentials.conf"
+            
+            # Reload configure.sh to pick up the new credentials
+            . $PREFIX/configure.sh
+        else
+            echo ""
+            echo "❌ ERROR: No API key CSV file found!"
+            echo "Please create ${ACS_CONFIG_DIR}/credentials.conf manually with the following content:"
+            echo ""
+            echo "ACS_CLIENT_ID=\"your-client-id\""
+            echo "ACS_CLIENT_SECRET=\"your-client-secret\""
+            echo ""
+            exit 1
+        fi
+    fi
+    
+    # Verify credentials are loaded
+    if [ -z "$ACS_CLIENT_ID" ] || [ -z "$ACS_CLIENT_SECRET" ]; then
+        echo "❌ ERROR: Credentials not loaded properly!"
+        echo "Please check ${ACS_CONFIG_DIR}/credentials.conf file."
+        exit 1
+    fi
+    
+    # Check if token exists and is valid
+    TOKEN_VALID=false
+    
+    if [ -f "${ACS_CONFIG_DIR}/auth.header" ]; then
+        echo "Checking existing token validity..."
+        
+        # Test token with a simple API call
+        TEST_RESPONSE=$(curl -s "${REST_API_URI}?limit=1" -H "@${ACS_AUTH_HEADER}" 2>/dev/null)
+        
+        # Check if response contains "databases" key (valid) or error
+        if echo "$TEST_RESPONSE" | jq -e '.databases' > /dev/null 2>&1; then
+            TOKEN_VALID=true
+            echo "✓ Existing token is valid"
+        else
+            echo "⚠️  Existing token is invalid or expired"
+        fi
+    else
+        echo "ℹ️  No token found"
+    fi
+    
+    # Generate new token if needed
+    if [ "$TOKEN_VALID" = false ]; then
+        echo "Generating new authentication token..."
+        . $PREFIX/api-scripts/get-token.sh
+        
+        # Verify token was generated
+        if [ ! -f "${ACS_CONFIG_DIR}/auth.header" ]; then
+            echo ""
+            echo "❌ ERROR: Failed to generate authentication token!"
+            echo "Please check your credentials and try again."
+            exit 1
+        fi
+        
+        echo "✓ New token generated successfully"
+    fi
+    
     echo ""
 }
 
@@ -397,7 +634,7 @@ wait_for_cluster_active() {
     . $PREFIX/api-scripts/common.sh
     
     echo "Monitoring cluster status..."
-    echo "This typically takes 10-20 minutes total."
+    echo "This typically takes 10-30 minutes total."
     echo "You can safely interrupt (Ctrl+C) and re-run setup.sh to resume."
     echo ""
     
@@ -434,6 +671,28 @@ wait_for_cluster_active() {
             echo "✓ Cluster is now ACTIVE!"
             CLUSTER_SETUP_PHASE="active"
             save_state
+            
+            # Get connection details from API and update cluster config file
+            echo "Retrieving cluster connection details..."
+            . $PREFIX/api-scripts/common.sh
+            ACS_CLUSTER_HOSTNAME=$(acs_get_cluster_hostname "${ACS_CLUSTER_ID}" 2>/dev/null)
+            ACS_CLUSTER_TLSNAME=$(acs_get_cluster_tls_name "${ACS_CLUSTER_ID}" 2>/dev/null)
+            
+            if [ -n "$ACS_CLUSTER_HOSTNAME" ]; then
+                # Update cluster config file with connection details
+                cat > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh" <<EOF
+export ACS_CLUSTER_ID="${ACS_CLUSTER_ID}"
+export ACS_CLUSTER_NAME="${ACS_CLUSTER_NAME}"
+export ACS_CLUSTER_STATUS="active"
+export ACS_CLUSTER_HOSTNAME="${ACS_CLUSTER_HOSTNAME}"
+export ACS_CLUSTER_TLSNAME="${ACS_CLUSTER_TLSNAME}"
+export SERVICE_PORT=4000
+EOF
+                echo "✓ Updated cluster config with connection details"
+            else
+                echo "⚠️  Could not retrieve connection details from API"
+            fi
+            
             break
         fi
         
@@ -461,8 +720,8 @@ run_db_user_setup() {
     echo ""
     
     # Check if user already exists
-    if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/db_user.sh" ]; then
-        source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/db_user.sh"
+    if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/db_user.sh" ]; then
+        source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/db_user.sh"
         if [ -n "$DB_USER_ID" ]; then
             echo "✓ Database user '${DB_USER}' already configured (ID: ${DB_USER_ID})"
             echo ""
@@ -493,7 +752,7 @@ run_vpc_peering_setup() {
     save_state
     
     echo ""
-    echo "✓ VPC peering setup complete!"
+    echo "✓ VPC peering setup complete (with connectivity test and IP resolution)!"
     echo ""
 }
 
@@ -506,22 +765,12 @@ run_grafana_create_instance() {
     echo "============================================"
     echo ""
     
-    # Check if Grafana instance already exists
-    aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
-    GRAFANA_EXISTS=$(aerolab client list -j 2>/dev/null | jq -r ".[] | select(.ClientName == \"${GRAFANA_NAME}\") | .ClientName" | head -1)
-    
-    if [ -n "$GRAFANA_EXISTS" ]; then
-        echo "✓ Grafana instance already exists"
-        GRAFANA_SETUP_PHASE="created"
-        save_state
-        echo ""
-        return 0
-    fi
-    
-    # Run Grafana instance creation
+    # Run Grafana instance creation (handles both new and existing instances)
     . $PREFIX/grafana_create_instance.sh
     
-    GRAFANA_SETUP_PHASE="created"
+    # Once Grafana instance exists, mark as complete
+    # Prometheus configuration is tracked separately
+    GRAFANA_SETUP_PHASE="complete"
     save_state
     
     echo ""
@@ -535,8 +784,8 @@ run_prometheus_config() {
     echo ""
     
     # Check if already configured
-    if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
-        source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
+    if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
+        source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh"
         if [ "${PROMETHEUS_CONFIGURED}" == "true" ]; then
             echo "✓ Prometheus already configured"
             if [ -n "${CLUSTER_METRICS_ENDPOINTS}" ]; then
@@ -551,7 +800,6 @@ run_prometheus_config() {
     . $PREFIX/prometheus_configure.sh
     
     PROMETHEUS_CONFIG_PHASE="complete"
-    GRAFANA_SETUP_PHASE="complete"
     save_state
     
     echo ""
@@ -632,24 +880,24 @@ finalize_setup() {
     # Load all configurations
     source "${ACS_CONFIG_DIR}/current_cluster.sh"
     
-    if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh" ]; then
-        source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh"
+    if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh" ]; then
+        source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh"
     fi
     
-    if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/db_user.sh" ]; then
-        source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/db_user.sh"
+    if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/db_user.sh" ]; then
+        source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/db_user.sh"
     fi
     
     if [ -f "${CLIENT_CONFIG_DIR}/client_config.sh" ]; then
         source "${CLIENT_CONFIG_DIR}/client_config.sh"
     fi
     
-    if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/vpc_peering.sh" ]; then
-        source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/vpc_peering.sh"
+    if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/vpc_peering.sh" ]; then
+        source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/vpc_peering.sh"
     fi
     
-    if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
-        source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
+    if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
+        source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh"
     fi
     
     # ============================================
@@ -840,14 +1088,14 @@ finalize_setup() {
     echo "  All configuration files are stored in:"
     echo "    ${ACS_CONFIG_DIR}/"
     echo ""
-    echo "  Cluster Config:     ${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh"
-    echo "  DB User Config:     ${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/db_user.sh"
+    echo "  Cluster Config:     ${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh"
+    echo "  DB User Config:     ${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/db_user.sh"
     echo "  Client Config:      ${CLIENT_CONFIG_DIR}/client_config.sh"
     if [[ "$VPC_PEERING_PHASE" == "complete" ]]; then
-        echo "  VPC Peering:        ${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/vpc_peering.sh"
+        echo "  VPC Peering:        ${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/vpc_peering.sh"
     fi
     if [[ "$GRAFANA_SETUP_PHASE" == "complete" ]]; then
-        echo "  Grafana Config:     ${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
+        echo "  Grafana Config:     ${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh"
     fi
     echo ""
     
@@ -910,6 +1158,10 @@ echo "Aerospike Cloud - Complete Setup"
 echo "============================================"
 echo ""
 
+# Validate and refresh authentication token first
+validate_and_refresh_token
+
+# Validate state against actual resources
 validate_state
 display_current_state
 
@@ -923,13 +1175,11 @@ if [[ "$CLUSTER_SETUP_PHASE" == "provisioning" ]] && [[ "$CLIENT_SETUP_PHASE" !=
     run_client_setup "2 (Parallel)"
 fi
 
-# Phase 2.5: Start Grafana instance creation in parallel (if cluster is provisioning and Grafana not created)
+# Phase 2.5: Start Grafana instance creation in parallel (if cluster is provisioning and Grafana not done)
 if [[ "$CLUSTER_SETUP_PHASE" == "provisioning" ]] && [[ "$GRAFANA_SETUP_PHASE" == "pending" ]]; then
     # Only create Grafana if client setup has started or completed (need client VPC)
     if [[ "$CLIENT_SETUP_PHASE" != "pending" ]]; then
         run_grafana_create_instance "2.5 (Parallel)"
-        GRAFANA_SETUP_PHASE="creating"
-        save_state
     fi
 fi
 
@@ -952,71 +1202,48 @@ if [[ "$CLUSTER_SETUP_PHASE" == "active" ]] && [[ "$CLIENT_SETUP_PHASE" != "comp
     fi
 fi
 
-# Phase 5: Setup VPC peering (if cluster and client are ready, and VPC peering not done)
-if [[ "$CLUSTER_SETUP_PHASE" == "active" ]] && [[ "$CLIENT_SETUP_PHASE" == "complete" ]] && [[ "$VPC_PEERING_PHASE" == "pending" ]]; then
-    # Ask if user wants to set up VPC peering
-    echo ""
-    read -p "Would you like to set up VPC peering now? [Y/n]: " -n 1 -r
-    echo ""
-    
-    if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+# Phase 5: Setup/validate VPC peering (if cluster and client are ready)
+# Run even if complete to validate routes and ensure IPs are saved
+if [[ "$CLUSTER_SETUP_PHASE" == "active" ]] && [[ "$CLIENT_SETUP_PHASE" == "complete" ]]; then
+    if [[ "$VPC_PEERING_PHASE" == "pending" ]]; then
         run_vpc_peering_setup
-    else
-        echo "Skipping VPC peering setup. You can run it later with:"
-        echo "  ./vpc_peering_setup.sh"
+    elif [[ "$VPC_PEERING_PHASE" == "complete" ]]; then
+        # VPC peering already complete, but run validation to ensure routes and IPs are current
+        echo ""
+        echo "============================================"
+        echo "Phase 6: VPC Peering Validation"
+        echo "============================================"
+        echo ""
+        echo "VPC peering already complete, validating configuration..."
+        echo ""
+        
+        # Run vpc_peering_setup.sh which is now idempotent
+        # It will validate routes, fix stale entries, and ensure IPs are saved
+        . $PREFIX/vpc_peering_setup.sh
+        
+        echo ""
+        echo "✓ VPC peering validation complete!"
         echo ""
     fi
 fi
 
 # Phase 6: Create Grafana instance if not done yet (after client is complete)
 if [[ "$CLUSTER_SETUP_PHASE" == "active" ]] && [[ "$CLIENT_SETUP_PHASE" == "complete" ]] && [[ "$GRAFANA_SETUP_PHASE" == "pending" ]]; then
-    # Ask if user wants to set up Grafana
-    echo ""
-    read -p "Would you like to create Grafana instance now? [Y/n]: " -n 1 -r
-    echo ""
-    
-    if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
-        run_grafana_create_instance "6"
-    else
-        echo "Skipping Grafana creation. You can run it later with:"
-        echo "  ./grafana_create_instance.sh"
-        echo ""
-    fi
+    run_grafana_create_instance "6"
 fi
 
 # Phase 7: Configure Prometheus (after VPC peering and Grafana are ready)
-if [[ "$CLUSTER_SETUP_PHASE" == "active" ]] && [[ "$CLIENT_SETUP_PHASE" == "complete" ]] && [[ "$VPC_PEERING_PHASE" == "complete" ]] && [[ "$GRAFANA_SETUP_PHASE" == "created" ]] && [[ "$PROMETHEUS_CONFIG_PHASE" == "pending" ]]; then
-    # Ask if user wants to configure Prometheus
-    echo ""
-    read -p "Would you like to configure Prometheus for cluster monitoring now? [Y/n]: " -n 1 -r
-    echo ""
-    
-    if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
-        run_prometheus_config
-    else
-        echo "Skipping Prometheus configuration. You can run it later with:"
-        echo "  ./prometheus_configure.sh"
-        echo ""
-    fi
+if [[ "$CLUSTER_SETUP_PHASE" == "active" ]] && [[ "$CLIENT_SETUP_PHASE" == "complete" ]] && [[ "$VPC_PEERING_PHASE" == "complete" ]] && [[ "$GRAFANA_SETUP_PHASE" == "complete" ]] && [[ "$PROMETHEUS_CONFIG_PHASE" == "pending" ]]; then
+    run_prometheus_config
 fi
 
 # Phase 8: Build Perseus workload (after everything else is ready)
 if [[ "$CLUSTER_SETUP_PHASE" == "active" ]] && [[ "$CLIENT_SETUP_PHASE" == "complete" ]] && [[ "$VPC_PEERING_PHASE" == "complete" ]] && [[ "$GRAFANA_SETUP_PHASE" == "complete" ]] && [[ "$PERSEUS_BUILD_PHASE" == "pending" ]]; then
-    # Ask if user wants to build Perseus
-    echo ""
-    read -p "Would you like to build Perseus workload now? [Y/n]: " -n 1 -r
-    echo ""
-    
-    if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
-        run_perseus_build
-    else
-        echo "Skipping Perseus build. You can run it later:"
-        echo "  cd aeropsike-cloud && . ../client/buildPerseus.sh"
-        echo ""
-    fi
+    run_perseus_build
 fi
 
 # Phase 9: Final setup complete
 if [[ "$CLUSTER_SETUP_PHASE" == "active" ]] && [[ "$CLIENT_SETUP_PHASE" == "complete" ]]; then
     finalize_setup
 fi
+

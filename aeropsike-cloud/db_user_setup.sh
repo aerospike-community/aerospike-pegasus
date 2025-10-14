@@ -65,7 +65,7 @@ if [ -n "$EXISTING_USER" ] && [ "$EXISTING_USER" != "null" ]; then
     USER_ROLES=$(echo "$EXISTING_CREDS" | jq -r ".credentials[] | select(.name == \"${DB_USER}\") | .roles | join(\", \")")
     
     # Save user info (including password from config for convenience)
-    USER_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/db_user.sh"
+    USER_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/db_user.sh"
     cat > "${USER_CONFIG_FILE}" <<EOF
 export DB_USER="${DB_USER}"
 export DB_PASSWORD="${DB_PASSWORD}"
@@ -148,7 +148,7 @@ echo ""
 # Save user configuration
 # ============================================
 
-USER_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/db_user.sh"
+USER_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/db_user.sh"
 cat > "${USER_CONFIG_FILE}" <<EOF
 export DB_USER="${USER_NAME}"
 export DB_PASSWORD="${DB_PASSWORD}"
@@ -164,8 +164,8 @@ echo ""
 # Display connection information
 # ============================================
 
-if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh" ]; then
-    source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh"
+if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh" ]; then
+    source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh"
     
     echo "============================================"
     echo "Connection Information"

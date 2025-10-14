@@ -4,8 +4,11 @@ if [ -z "$PREFIX" ];
     . $PREFIX/configure.sh
 fi
 
-# Parse command line arguments
-SKIP_CONFIRM=false
+# Parse command line arguments (check if already set via export)
+if [ -z "$SKIP_CONFIRM" ]; then
+    SKIP_CONFIRM=false
+fi
+
 if [[ "$1" == "--yes" ]] || [[ "$1" == "-y" ]]; then
     SKIP_CONFIRM=true
 fi
@@ -71,24 +74,28 @@ if [[ "${HTTP_CODE}" -eq "202" ]] || [[ "${HTTP_CODE}" -eq "204" ]]; then
     echo "✓ Cluster deletion initiated successfully (HTTP ${HTTP_CODE})"
     echo ""
     
-    # Clean up tracker files
-    echo "Cleaning up tracker files..."
+    # Clean up tracker files and entire cluster folder
+    echo "Cleaning up cluster files..."
     
     if [ -f "${ACS_CONFIG_DIR}/current_cluster.sh" ]; then
-        rm -f "${ACS_CONFIG_DIR}/current_cluster.sh"
-        echo "✓ Removed ${ACS_CONFIG_DIR}/current_cluster.sh"
+        # Check if the current_cluster.sh matches this cluster
+        source "${ACS_CONFIG_DIR}/current_cluster.sh"
+        if [ "${ACS_CLUSTER_NAME}" == "$(basename $(dirname ${CLIENT_CONFIG_DIR}))" ]; then
+            rm -f "${ACS_CONFIG_DIR}/current_cluster.sh"
+            echo "✓ Removed ${ACS_CONFIG_DIR}/current_cluster.sh"
+        fi
     fi
     
-    if [ -d "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}" ]; then
-        rm -rf "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}"
-        echo "✓ Removed ${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/"
+    # Remove the entire cluster folder (includes state, client, and cluster ID subfolder)
+    if [ -d "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}" ]; then
+        rm -rf "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}"
+        echo "✓ Removed ${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/"
     fi
     
     echo ""
     echo "====================================="
     echo "✓ Cluster destruction complete!"
     echo "====================================="
-    echo ""
     echo "Note: The cluster may take a few minutes to fully decommission."
     echo "You can verify by checking the Aerospike Cloud console."
     

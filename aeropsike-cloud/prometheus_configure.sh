@@ -13,20 +13,20 @@ fi
 source "${ACS_CONFIG_DIR}/current_cluster.sh"
 
 # Ensure Grafana exists
-if [ ! -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
+if [ ! -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh" ]; then
     echo "❌ ERROR: Grafana configuration not found!"
     echo "Please run Grafana setup first."
     exit 1
 fi
-source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
+source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh"
 
 # Load cluster connection details
-if [ ! -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh" ]; then
+if [ ! -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh" ]; then
     echo "❌ ERROR: Cluster connection details not found!"
     echo "Please run './setup.sh' to complete cluster setup."
     exit 1
 fi
-source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh"
+source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh"
 
 # Load client config
 if [ ! -f "${CLIENT_CONFIG_DIR}/client_config.sh" ]; then
@@ -47,50 +47,26 @@ echo "  Grafana: ${GRAFANA_NAME} (${GRAFANA_IP})"
 echo ""
 
 # ============================================
-# Get cluster IPs
+# Get cluster IPs from config
 # ============================================
 
-echo "Retrieving cluster IPs..."
+echo "Loading cluster IPs from configuration..."
 echo ""
 
-# Try from config first
-CLUSTER_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh"
-if [ -f "$CLUSTER_CONFIG_FILE" ]; then
-    source "$CLUSTER_CONFIG_FILE"
-fi
-
+# Cluster IPs should already be in config (saved during VPC peering setup)
 if [ -z "${CLUSTER_IPS}" ] || [ "${CLUSTER_IPS}" == "null" ]; then
-    echo "Resolving cluster IPs via client..."
-    
-    # Configure aerolab backend
-    aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
-    
-    # Resolve via client (which has VPC peering)
-    DNS_OUTPUT=$(aerolab client attach -n "${CLIENT_NAME}" -l 1 -- "dig +short ${ACS_CLUSTER_HOSTNAME}" 2>&1)
-    CLUSTER_IPS=$(echo "$DNS_OUTPUT" | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {printf "%s,", $0}' | sed 's/,$//')
-    
-    if [ -n "$CLUSTER_IPS" ]; then
-        echo "✓ Resolved cluster IPs: ${CLUSTER_IPS}"
-        
-        # Save to cluster config for future use
-        if [ -f "$CLUSTER_CONFIG_FILE" ]; then
-            if ! grep -q "CLUSTER_IPS" "$CLUSTER_CONFIG_FILE"; then
-                echo "export CLUSTER_IPS=\"${CLUSTER_IPS}\"" >> "$CLUSTER_CONFIG_FILE"
-            fi
-        fi
-    else
-        echo "❌ ERROR: Could not resolve cluster IPs!"
-        echo ""
-        echo "Debug info - DNS output:"
-        echo "$DNS_OUTPUT"
-        echo ""
-        echo "Please ensure VPC peering is complete and working."
-        exit 1
-    fi
-else
-    echo "Using cluster IPs from config: ${CLUSTER_IPS}"
+    echo "❌ ERROR: Cluster IPs not found in configuration!"
+    echo ""
+    echo "This usually means VPC peering hasn't completed successfully."
+    echo ""
+    echo "Please run VPC peering setup again:"
+    echo "  cd aeropsike-cloud && ./vpc_peering_setup.sh"
+    echo ""
+    echo "The VPC peering setup will test connectivity and save cluster IPs."
+    exit 1
 fi
 
+echo "✓ Using cluster IPs: ${CLUSTER_IPS}"
 echo ""
 
 # ============================================
@@ -169,7 +145,7 @@ fi
 # Update Grafana config file with cluster endpoints
 CLUSTER_ENDPOINTS=$(echo "$CLUSTER_IPS" | sed "s/,/:${PROMETHEUS_PORT},/g" | sed "s/$/:${PROMETHEUS_PORT}/")
 
-cat > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh" <<EOF
+cat > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh" <<EOF
 export GRAFANA_NAME="${GRAFANA_NAME}"
 export GRAFANA_IP="${GRAFANA_IP}"
 export GRAFANA_PRIVATE_IP="${GRAFANA_PRIVATE_IP}"

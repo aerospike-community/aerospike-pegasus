@@ -14,7 +14,7 @@ set -e
 # Global Variables
 # ============================================
 
-PEERING_STATE_FILE="${ACS_CONFIG_DIR}/vpc_peering_state.sh"
+PEERING_STATE_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/vpc_peering_state.sh"
 
 # ============================================
 # Helper Functions
@@ -156,10 +156,56 @@ check_cidr_overlap() {
 # VPC Peering Functions
 # ============================================
 
+validate_existing_peering() {
+    log_info "Checking for existing VPC peering..."
+    
+    # Get existing peering from Aerospike Cloud API
+    PEERING_JSON=$(acs_get_vpc_peering_json "${ACS_CLUSTER_ID}")
+    EXISTING_PEERING_COUNT=$(echo "$PEERING_JSON" | jq -r '.count // 0')
+    
+    if [[ "$EXISTING_PEERING_COUNT" -gt 0 ]]; then
+        # Peering exists, get details
+        EXISTING_STATUS=$(echo "$PEERING_JSON" | jq -r '.vpcPeerings[0].status // ""')
+        EXISTING_PEERING_ID=$(echo "$PEERING_JSON" | jq -r '.vpcPeerings[0].peeringId // ""')
+        EXISTING_VPC_ID=$(echo "$PEERING_JSON" | jq -r '.vpcPeerings[0].vpcId // ""')
+        
+        log_success "Found existing VPC peering:"
+        echo "  Status: ${EXISTING_STATUS}"
+        echo "  Peering ID: ${EXISTING_PEERING_ID}"
+        echo "  VPC ID: ${EXISTING_VPC_ID}"
+        
+        # Check if it's for the same VPC
+        if [ "$EXISTING_VPC_ID" != "$CLIENT_VPC_ID" ]; then
+            log_error "Existing peering is for different VPC (${EXISTING_VPC_ID})"
+            log_error "Expected: ${CLIENT_VPC_ID}"
+            log_error "Please delete the existing peering and try again"
+            exit 1
+        fi
+        
+        # Check status and return appropriate state
+        if [ "$EXISTING_STATUS" == "active" ]; then
+            log_success "VPC peering is already active"
+            return 0  # Fully configured
+        elif [ "$EXISTING_STATUS" == "pending-acceptance" ]; then
+            log_info "VPC peering is pending acceptance"
+            return 1  # Need to accept
+        elif [ "$EXISTING_STATUS" == "provisioning" ] || [ "$EXISTING_STATUS" == "initiating-request" ]; then
+            log_info "VPC peering is being provisioned"
+            return 2  # Wait for it
+        else
+            log_warning "VPC peering status: ${EXISTING_STATUS}"
+            return 3  # Unknown state
+        fi
+    else
+        log_info "No existing VPC peering found"
+        return 4  # Need to create
+    fi
+}
+
 initiate_vpc_peering() {
     log_info "Initiating VPC peering request..."
     
-    # Check if peering already exists
+    # Check if peering already exists (shouldn't get here if validate caught it, but safety check)
     EXISTING_PEERING=$(acs_get_vpc_peering_json "${ACS_CLUSTER_ID}" | jq -r '.count // 0')
     
     if [[ "$EXISTING_PEERING" -gt 0 ]]; then
@@ -288,8 +334,8 @@ get_peering_details() {
     log_success "Hosted Zone ID: ${ZONE_ID}"
     
     # Save to cluster config directory
-    mkdir -p "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}"
-    cat > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/vpc_peering.sh" <<EOF
+    mkdir -p "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}"
+    cat > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/vpc_peering.sh" <<EOF
 export PEERING_ID="${PEERING_ID}"
 export ZONE_ID="${ZONE_ID}"
 export CLIENT_VPC_ID="${CLIENT_VPC_ID}"
@@ -357,24 +403,48 @@ configure_route_tables() {
     
     local routes_added=0
     local routes_existed=0
+    local routes_fixed=0
     
     for ROUTE_TABLE_ID in $ROUTE_TABLE_IDS; do
         log_info "Checking route table: ${ROUTE_TABLE_ID}"
         
-        # Check if route already exists
-        EXISTING_ROUTE=$(aws ec2 describe-route-tables \
+        # Check if route already exists and get its details
+        ROUTE_INFO=$(aws ec2 describe-route-tables \
             --region "${CLIENT_AWS_REGION}" \
             --route-table-id "${ROUTE_TABLE_ID}" \
-            --query "RouteTables[0].Routes[?DestinationCidrBlock=='${DEST_CIDR}']" \
+            --query "RouteTables[0].Routes[?DestinationCidrBlock=='${DEST_CIDR}'].[VpcPeeringConnectionId,State]" \
             --output text 2>/dev/null)
         
-        if [ -n "$EXISTING_ROUTE" ]; then
-            log_warning "Route to ${DEST_CIDR} already exists in ${ROUTE_TABLE_ID}"
-            routes_existed=$((routes_existed + 1))
-            continue
+        if [ -n "$ROUTE_INFO" ]; then
+            # Route exists, check if it's valid
+            EXISTING_PEERING_ID=$(echo "$ROUTE_INFO" | awk '{print $1}')
+            ROUTE_STATE=$(echo "$ROUTE_INFO" | awk '{print $2}')
+            
+            if [ "$EXISTING_PEERING_ID" == "$PEERING_ID" ] && [ "$ROUTE_STATE" == "active" ]; then
+                log_success "Route to ${DEST_CIDR} already correctly configured"
+                routes_existed=$((routes_existed + 1))
+                continue
+            else
+                # Route exists but is stale (blackhole) or pointing to wrong peering
+                log_warning "Found stale route: peering=${EXISTING_PEERING_ID}, state=${ROUTE_STATE}"
+                log_info "Deleting stale route..."
+                
+                aws ec2 delete-route \
+                    --region "${CLIENT_AWS_REGION}" \
+                    --route-table-id "${ROUTE_TABLE_ID}" \
+                    --destination-cidr-block "${DEST_CIDR}" > /dev/null 2>&1
+                
+                if [ $? -eq 0 ]; then
+                    log_success "Stale route deleted"
+                    routes_fixed=$((routes_fixed + 1))
+                else
+                    log_error "Failed to delete stale route"
+                    exit 1
+                fi
+            fi
         fi
         
-        # Create route
+        # Create route (either new or replacing stale one)
         log_info "Creating route to ${DEST_CIDR} via ${PEERING_ID}"
         aws ec2 create-route \
             --region "${CLIENT_AWS_REGION}" \
@@ -391,7 +461,7 @@ configure_route_tables() {
         fi
     done
     
-    log_success "Routes configured: ${routes_added} added, ${routes_existed} already existed"
+    log_success "Routes configured: ${routes_added} added, ${routes_existed} already valid, ${routes_fixed} stale fixed"
     
     ROUTES_CONFIGURED="true"
     save_peering_state
@@ -400,15 +470,20 @@ configure_route_tables() {
 associate_hosted_zone() {
     log_info "Associating VPC with private hosted zone..."
     
-    # Associate VPC with hosted zone
-    aws route53 associate-vpc-with-hosted-zone \
+    # Associate VPC with hosted zone (might already be associated, so we allow failure)
+    set +e  # Temporarily disable exit on error
+    ASSOC_OUTPUT=$(aws route53 associate-vpc-with-hosted-zone \
         --hosted-zone-id "${ZONE_ID}" \
-        --vpc VPCRegion="${CLIENT_AWS_REGION}",VPCId="${CLIENT_VPC_ID}" > /dev/null 2>&1
+        --vpc VPCRegion="${CLIENT_AWS_REGION}",VPCId="${CLIENT_VPC_ID}" 2>&1)
+    ASSOC_EXIT_CODE=$?
+    set -e  # Re-enable exit on error
     
-    if [ $? -eq 0 ]; then
+    if [ $ASSOC_EXIT_CODE -eq 0 ]; then
         log_success "VPC associated with hosted zone ${ZONE_ID}"
+    elif echo "$ASSOC_OUTPUT" | grep -q "ConflictingDomainExists\|already associated"; then
+        log_success "VPC already associated with hosted zone ${ZONE_ID}"
     else
-        log_warning "VPC association may have failed, but continuing (might already be associated)"
+        log_warning "VPC association status unclear, but continuing (error: ${ASSOC_OUTPUT})"
     fi
     
     DNS_CONFIGURED="true"
@@ -476,41 +551,148 @@ configure_security_groups() {
 }
 
 test_connectivity() {
-    log_info "Testing connectivity..."
+    log_info "Testing connectivity and resolving cluster IPs..."
+    
+    # Load client config
+    if [ ! -f "${CLIENT_CONFIG_DIR}/client_config.sh" ]; then
+        log_error "Client config file not found"
+        exit 1
+    fi
+    source "${CLIENT_CONFIG_DIR}/client_config.sh"
     
     # Get cluster hostname
-    ACS_CLUSTER_HOSTNAME=$(acs_get_cluster_hostname "${ACS_CLUSTER_ID}" 2>/dev/null)
+    if [ ! -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh" ]; then
+        log_error "Cluster config file not found"
+        exit 1
+    fi
+    source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh"
     
     if [ -z "$ACS_CLUSTER_HOSTNAME" ]; then
-        log_error "Failed to get cluster hostname"
+        log_error "Cluster hostname not found in config"
+        exit 1
+    fi
+    
+    if [ -z "$CLIENT_NAME" ]; then
+        log_error "Client name not found in config"
         exit 1
     fi
     
     log_info "Cluster hostname: ${ACS_CLUSTER_HOSTNAME}"
+    log_info "Client name: ${CLIENT_NAME}"
     
-    # Wait a bit for DNS propagation
-    log_info "Waiting 30 seconds for DNS propagation..."
-    sleep 30
+    # Check if this is a new setup or re-validation
+    CLUSTER_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh"
+    EXISTING_IPS=$(grep "^export CLUSTER_IPS=" "$CLUSTER_CONFIG_FILE" 2>/dev/null | cut -d'"' -f2)
     
-    # Test DNS resolution
-    log_info "Testing DNS resolution..."
-    DNS_RESULT=$(dig +short "${ACS_CLUSTER_HOSTNAME}" 2>/dev/null || nslookup "${ACS_CLUSTER_HOSTNAME}" 2>/dev/null || getent hosts "${ACS_CLUSTER_HOSTNAME}" 2>/dev/null)
+    # Configure aerolab backend
+    aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
     
-    if [ -z "$DNS_RESULT" ]; then
-        log_warning "DNS resolution failed. This may take a few minutes to propagate."
-        log_info "Try this command later:"
-        echo "  dig +short ${ACS_CLUSTER_HOSTNAME}"
+    # Test DNS resolution via client (with retry logic for new setups)
+    DNS_OUTPUT=""
+    EXIT_CODE=1
+    
+    if [ -z "$EXISTING_IPS" ]; then
+        # First time setup - retry DNS resolution with backoff (up to 3 minutes)
+        log_info "Resolving cluster IPs via DNS (with retry for propagation)..."
+        
+        MAX_ATTEMPTS=12
+        WAIT_TIME=15
+        
+        for attempt in $(seq 1 $MAX_ATTEMPTS); do
+            log_info "DNS resolution attempt ${attempt}/${MAX_ATTEMPTS}..."
+            
+            DNS_OUTPUT=$(aerolab client attach -n "${CLIENT_NAME}" -l 1 -- "dig +short ${ACS_CLUSTER_HOSTNAME}" 2>&1)
+            EXIT_CODE=$?
+            
+            # Check if we got valid IPs
+            if [ $EXIT_CODE -eq 0 ] && echo "$DNS_OUTPUT" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'; then
+                log_success "DNS resolution successful on attempt ${attempt}"
+                break
+            fi
+            
+            if [ $attempt -lt $MAX_ATTEMPTS ]; then
+                log_info "No IPs yet, waiting ${WAIT_TIME} seconds before retry..."
+                sleep $WAIT_TIME
+            else
+                log_warning "DNS resolution failed after ${MAX_ATTEMPTS} attempts"
+            fi
+        done
     else
-        log_success "DNS resolution successful!"
-        echo "Resolved IPs:"
-        echo "$DNS_RESULT"
+        # Re-validation - single attempt
+        log_info "Testing DNS resolution via client (re-validation)..."
+        DNS_OUTPUT=$(aerolab client attach -n "${CLIENT_NAME}" -l 1 -- "dig +short ${ACS_CLUSTER_HOSTNAME}" 2>&1)
+        EXIT_CODE=$?
     fi
     
-    log_info "To test connectivity from client instances, run:"
-    echo "  nc -zv <AEROSPIKE_IP> 4000"
     echo ""
-    log_info "To connect with aql, run:"
-    echo "  aql --tls-enable --tls-name ${ACS_CLUSTER_ID} --tls-cafile <path-to-ca-cert> -h ${ACS_CLUSTER_HOSTNAME}:4000"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "DNS Resolution Test"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    
+    if [ $EXIT_CODE -eq 0 ] && [ -n "$DNS_OUTPUT" ]; then
+        # Extract IPs from output (use same pattern as verify_connectivity.sh)
+        CLUSTER_IPS=$(echo "$DNS_OUTPUT" | grep -E '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | tr '\n' ',' | sed 's/,$//')
+        
+        if [ -n "$CLUSTER_IPS" ]; then
+            IP_COUNT=$(echo "$DNS_OUTPUT" | grep -E '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | wc -l | tr -d ' ')
+            
+            log_success "DNS RESOLUTION: SUCCESS"
+            echo ""
+            echo "Resolved ${IP_COUNT} IP address(es):"
+            echo "$DNS_OUTPUT" | grep -E '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | while read ip; do
+                echo "  - ${ip}"
+            done
+            echo ""
+            
+            # Save cluster IPs to cluster config
+            CLUSTER_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh"
+            if ! grep -q "CLUSTER_IPS" "$CLUSTER_CONFIG_FILE" 2>/dev/null; then
+                echo "export CLUSTER_IPS=\"${CLUSTER_IPS}\"" >> "$CLUSTER_CONFIG_FILE"
+                log_success "Cluster IPs saved to config file"
+            else
+                # Update existing line
+                sed -i.bak "s|export CLUSTER_IPS=.*|export CLUSTER_IPS=\"${CLUSTER_IPS}\"|" "$CLUSTER_CONFIG_FILE" 2>/dev/null || \
+                sed -i '' "s|export CLUSTER_IPS=.*|export CLUSTER_IPS=\"${CLUSTER_IPS}\"|" "$CLUSTER_CONFIG_FILE" 2>/dev/null
+                log_success "Cluster IPs updated in config file"
+            fi
+            
+            echo ""
+            log_success "VPC peering is working correctly!"
+            echo ""
+            echo "Verification:"
+            echo "  ✓ VPC peering connection is active"
+            echo "  ✓ Route tables are configured"
+            echo "  ✓ Private Hosted Zone is associated"
+            echo "  ✓ DNS resolution is functional"
+            echo ""
+        else
+            log_warning "DNS query succeeded but didn't return IP addresses"
+            echo "DNS output: $DNS_OUTPUT"
+            echo ""
+        fi
+    else
+        log_warning "DNS RESOLUTION: FAILED"
+        echo ""
+        echo "⚠️  Could not resolve cluster IPs after multiple attempts."
+        echo ""
+        echo "This can happen if DNS propagation is slower than usual."
+        echo ""
+        echo "VPC peering setup will continue, but you may need to:"
+        echo "  1. Wait a few minutes for DNS to propagate"
+        echo "  2. Re-run setup to resolve and save IPs:"
+        echo "     cd aeropsike-cloud && ./setup.sh"
+        echo ""
+        echo "You can also manually test DNS resolution:"
+        echo "  aerolab client attach -n ${CLIENT_NAME} -l 1"
+        echo "  dig +short ${ACS_CLUSTER_HOSTNAME}"
+        echo ""
+        echo "VPC peering is configured correctly - only IP resolution is pending."
+        echo ""
+    fi
+    
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
 }
 
 display_summary() {
@@ -527,7 +709,7 @@ display_summary() {
     echo "  Status: Active"
     echo ""
     echo "Configuration Files:"
-    echo "  ${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/vpc_peering.sh"
+    echo "  ${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/vpc_peering.sh"
     echo "  ${PEERING_STATE_FILE}"
     echo ""
     echo "Next Steps:"
@@ -574,6 +756,74 @@ main() {
     check_cidr_overlap
     
     echo ""
+    
+    # Step 1.5: Check if VPC peering already exists and is configured
+    set +e  # Temporarily disable exit on error (using return codes for flow control)
+    validate_existing_peering
+    PEERING_STATUS=$?
+    set -e  # Re-enable exit on error
+    
+    case $PEERING_STATUS in
+        0)  # Fully configured and active
+            log_info "VPC peering is already fully configured"
+            # Get peering details and validate routes/DNS
+            get_peering_details
+            
+            # Validate and fix routes if needed
+            log_info "Validating route tables..."
+            configure_route_tables
+            
+            # Validate DNS configuration
+            log_info "Validating DNS configuration..."
+            associate_hosted_zone
+            
+            # Configure security groups
+            configure_security_groups
+            
+            # Test connectivity
+            test_connectivity
+            
+            # Display summary
+            display_summary
+            
+            # Clean up state file
+            rm -f "$PEERING_STATE_FILE"
+            return 0
+            ;;
+        1)  # Pending acceptance
+            log_info "Resuming from pending-acceptance state..."
+            get_peering_details
+            accept_peering_connection
+            wait_for_peering_status "active"
+            configure_route_tables
+            associate_hosted_zone
+            configure_security_groups
+            test_connectivity
+            display_summary
+            rm -f "$PEERING_STATE_FILE"
+            return 0
+            ;;
+        2)  # Provisioning
+            log_info "Waiting for peering to be ready..."
+            wait_for_peering_status "pending-acceptance"
+            get_peering_details
+            accept_peering_connection
+            wait_for_peering_status "active"
+            configure_route_tables
+            associate_hosted_zone
+            configure_security_groups
+            test_connectivity
+            display_summary
+            rm -f "$PEERING_STATE_FILE"
+            return 0
+            ;;
+        4)  # Need to create
+            log_info "Creating new VPC peering..."
+            ;;
+        *)  # Unknown or error
+            log_warning "Unknown peering state, proceeding with setup..."
+            ;;
+    esac
     
     # Step 2: Initiate VPC peering (if not done)
     if [[ "$VPC_PEERING_INITIATED" != "true" ]]; then

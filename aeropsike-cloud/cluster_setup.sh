@@ -137,17 +137,23 @@ export ACS_CLUSTER_NAME="${ACS_CLUSTER_NAME}"
 export ACS_CLUSTER_STATUS="${ACS_CLUSTER_STATUS}"
 EOF
     
-    # If cluster is active, we're done
+    # Create or update cluster config file
+    mkdir -p "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}"
+    
+    # If cluster is active, get connection details
     if [[ "${ACS_CLUSTER_STATUS}" == "active" ]]; then
         echo ""
         echo "✓ Cluster is active and ready to use!"
         
-        # Get and save connection details
+        # Get connection details from API
         ACS_CLUSTER_HOSTNAME=$(acs_get_cluster_hostname "${ACS_CLUSTER_ID}")
         ACS_CLUSTER_TLSNAME=$(acs_get_cluster_tls_name "${ACS_CLUSTER_ID}")
         
-        mkdir -p "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}"
-        cat > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh" <<EOF
+        # Create cluster config with full details
+        cat > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh" <<EOF
+export ACS_CLUSTER_ID="${ACS_CLUSTER_ID}"
+export ACS_CLUSTER_NAME="${ACS_CLUSTER_NAME}"
+export ACS_CLUSTER_STATUS="${ACS_CLUSTER_STATUS}"
 export ACS_CLUSTER_HOSTNAME="${ACS_CLUSTER_HOSTNAME}"
 export ACS_CLUSTER_TLSNAME="${ACS_CLUSTER_TLSNAME}"
 export SERVICE_PORT=4000
@@ -163,6 +169,16 @@ EOF
     elif [[ "${ACS_CLUSTER_STATUS}" == "provisioning" ]]; then
         echo ""
         echo "Cluster is still provisioning."
+        
+        # Create basic cluster config file (connection details will be added when active)
+        cat > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh" <<EOF
+export ACS_CLUSTER_ID="${ACS_CLUSTER_ID}"
+export ACS_CLUSTER_NAME="${ACS_CLUSTER_NAME}"
+export ACS_CLUSTER_STATUS="provisioning"
+# Connection details will be added when cluster becomes active
+EOF
+        
+        echo "✓ Created basic cluster config file"
         
         # If skip provision wait, return early for parallel execution
         if [[ "$SKIP_PROVISION_WAIT" == "true" ]]; then
@@ -275,8 +291,8 @@ EOF
     echo ""
     
     # Wait for the cluster to be registered
-    echo "Waiting for cluster to be registered in the API..."
-    sleep 10
+    echo "Waiting for cluster to be registered"
+    sleep 5
     
     # Get the cluster ID
     ACS_CLUSTER_ID=$(acs_get_cluster_id "${ACS_CLUSTER_NAME}")
@@ -289,13 +305,23 @@ EOF
     echo "✓ Cluster created with ID: ${ACS_CLUSTER_ID}"
     
     # Save cluster info immediately (even if provisioning)
-    mkdir -p "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}"
+    mkdir -p "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}"
     
     cat > "${ACS_CONFIG_DIR}/current_cluster.sh" <<EOF
 export ACS_CLUSTER_ID="${ACS_CLUSTER_ID}"
 export ACS_CLUSTER_NAME="${ACS_CLUSTER_NAME}"
 export ACS_CLUSTER_STATUS="provisioning"
 EOF
+
+    # Create basic cluster config file immediately
+    cat > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh" <<EOF
+export ACS_CLUSTER_ID="${ACS_CLUSTER_ID}"
+export ACS_CLUSTER_NAME="${ACS_CLUSTER_NAME}"
+export ACS_CLUSTER_STATUS="provisioning"
+# Connection details will be added when cluster becomes active
+EOF
+    
+    echo "✓ Created basic cluster config file"
 
 fi  # End of cluster creation block
 
@@ -370,12 +396,15 @@ echo "✓ Cluster status: ${FINAL_STATUS}"
 echo "  Total provisioning time: ${TOTAL_MINUTES}m ${TOTAL_SECONDS}s"
 echo "====================================="
 
-# Get connection details
+# Get connection details from API
 ACS_CLUSTER_HOSTNAME=$(acs_get_cluster_hostname "${ACS_CLUSTER_ID}")
 ACS_CLUSTER_TLSNAME=$(acs_get_cluster_tls_name "${ACS_CLUSTER_ID}")
 
-# Save connection details
-cat > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh" <<EOF
+# Update cluster config file with full connection details
+cat > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh" <<EOF
+export ACS_CLUSTER_ID="${ACS_CLUSTER_ID}"
+export ACS_CLUSTER_NAME="${ACS_CLUSTER_NAME}"
+export ACS_CLUSTER_STATUS="active"
 export ACS_CLUSTER_HOSTNAME="${ACS_CLUSTER_HOSTNAME}"
 export ACS_CLUSTER_TLSNAME="${ACS_CLUSTER_TLSNAME}"
 export SERVICE_PORT=4000

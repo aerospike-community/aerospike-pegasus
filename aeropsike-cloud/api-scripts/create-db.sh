@@ -67,14 +67,14 @@ fi
 ACS_CLUSTER_HOSTNAME=$(acs_get_cluster_hostname "${ACS_CLUSTER_ID}")
 ACS_CLUSTER_TLSNAME=$(acs_get_cluster_tls_name "${ACS_CLUSTER_ID}")
 
-mkdir -p "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}"
+mkdir -p "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}"
 
 cat << EOF > "${ACS_CONFIG_DIR}/current_cluster.sh"
 export ACS_CLUSTER_ID="${ACS_CLUSTER_ID}"
 EOF
 
 # Save config for this database
-cat << EOF > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh"
+cat << EOF > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh"
 export ACS_CLUSTER_HOSTNAME="${ACS_CLUSTER_HOSTNAME}"
 export ACS_CLUSTER_TLSNAME="${ACS_CLUSTER_TLSNAME}"
 export SERVICE_PORT=4000

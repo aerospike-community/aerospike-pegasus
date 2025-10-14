@@ -35,13 +35,13 @@ if [ "$ACS_CLUSTER_STATUS" != "active" ]; then
 fi
 
 # Check if cluster config exists
-if [ ! -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh" ]; then
+if [ ! -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh" ]; then
     echo "❌ ERROR: Cluster configuration not found!"
     echo "Please run './setup.sh' to complete cluster setup."
     exit 1
 fi
 
-source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh"
+source "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh"
 
 echo "Setting up Grafana for cluster: ${ACS_CLUSTER_NAME}"
 echo "  Cluster ID: ${ACS_CLUSTER_ID}"
@@ -77,7 +77,7 @@ if [ -n "$EXISTING_GRAFANA" ]; then
         echo ""
         
         # Get cluster IPs from config if available
-        CLUSTER_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh"
+        CLUSTER_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh"
         if [ -f "$CLUSTER_CONFIG_FILE" ]; then
             source "$CLUSTER_CONFIG_FILE"
         fi
@@ -89,7 +89,7 @@ if [ -n "$EXISTING_GRAFANA" ]; then
         fi
         
         # Save Grafana config
-        GRAFANA_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
+        GRAFANA_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh"
         cat > "${GRAFANA_CONFIG_FILE}" <<EOF
 export GRAFANA_NAME="${GRAFANA_NAME}"
 export GRAFANA_IP="${GRAFANA_IP}"
@@ -195,41 +195,21 @@ echo "Configuring Prometheus to scrape Aerospike Cloud cluster..."
 echo ""
 
 # Get cluster IPs - try from config first, then resolve via client
-CLUSTER_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh"
+CLUSTER_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh"
 if [ -f "$CLUSTER_CONFIG_FILE" ]; then
     source "$CLUSTER_CONFIG_FILE"
 fi
 
 if [ -z "${CLUSTER_IPS}" ] || [ "${CLUSTER_IPS}" == "null" ]; then
-    echo "Resolving cluster IPs via client..."
-    
-    # Check if client exists
-    if [ ! -f "${CLIENT_CONFIG_DIR}/client_config.sh" ]; then
-        echo "⚠️  WARNING: Cannot resolve cluster IPs - client config not found"
-        echo "You'll need to manually configure Prometheus to scrape:"
-        echo "  ${ACS_CLUSTER_HOSTNAME}:${PROMETHEUS_PORT}"
-        CLUSTER_IPS=""
-    else
-        source "${CLIENT_CONFIG_DIR}/client_config.sh"
-        
-        # Resolve via client (which has VPC peering)
-        DNS_OUTPUT=$(aerolab client attach -n "${CLIENT_NAME}" -l 1 -- "dig +short ${ACS_CLUSTER_HOSTNAME}" 2>&1)
-        CLUSTER_IPS=$(echo "$DNS_OUTPUT" | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {printf "%s,", $0}' | sed 's/,$//')
-        
-        if [ -n "$CLUSTER_IPS" ]; then
-            echo "✓ Resolved cluster IPs: ${CLUSTER_IPS}"
-            
-            # Save to cluster config for future use
-            if [ -f "$CLUSTER_CONFIG_FILE" ]; then
-                if ! grep -q "CLUSTER_IPS" "$CLUSTER_CONFIG_FILE"; then
-                    echo "export CLUSTER_IPS=\"${CLUSTER_IPS}\"" >> "$CLUSTER_CONFIG_FILE"
-                fi
-            fi
-        else
-            echo "⚠️  WARNING: Could not resolve cluster IPs"
-            CLUSTER_IPS=""
-        fi
-    fi
+    echo "⚠️  WARNING: Cluster IPs not found in configuration"
+    echo "Prometheus configuration will be skipped."
+    echo ""
+    echo "To configure Prometheus, please run VPC peering setup to resolve IPs:"
+    echo "  cd aeropsike-cloud && ./vpc_peering_setup.sh"
+    echo ""
+    CLUSTER_IPS=""
+else
+    echo "✓ Using cluster IPs from config: ${CLUSTER_IPS}"
 fi
 
 # Configure Prometheus if we have IPs
@@ -290,7 +270,7 @@ fi
 echo ""
 
 # Save Grafana configuration
-GRAFANA_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
+GRAFANA_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh"
 mkdir -p "$(dirname "$GRAFANA_CONFIG_FILE")"
 
 cat > "${GRAFANA_CONFIG_FILE}" <<EOF

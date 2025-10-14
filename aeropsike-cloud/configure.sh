@@ -52,7 +52,7 @@ DB_PASSWORD="admin12345"
 
 # AWS Config for Client
 CLIENT_AWS_REGION="${CLOUD_REGION}"  # Use same region as cluster
-CLIENT_AWS_EXPIRE="2h"  # Length of life of nodes prior to expiry
+CLIENT_AWS_EXPIRE="4h"  # Length of life of nodes prior to expiry
 
 # Client VPC Config (separate from Aerospike Cloud cluster VPC)
 CLIENT_VPC_CIDR="10.140.0.0/19"  # Different CIDR from cluster
@@ -63,8 +63,8 @@ CLIENT_NAME="Perseus_${ACS_CLUSTER_NAME}"
 CLIENT_INSTANCE_TYPE="c6i.xlarge"  # Choose instances with more CPUs, >32GB RAM
 CLIENT_NUMBER_OF_NODES=1
 
-# Client Tracking
-CLIENT_CONFIG_DIR="${ACS_CONFIG_DIR}/client"
+# Client Tracking (now cluster-specific)
+CLIENT_CONFIG_DIR="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/client"
 
 # Client Generic Workload Config
 TRUNCATE_SET=False

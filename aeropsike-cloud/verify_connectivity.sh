@@ -88,7 +88,7 @@ if [ $EXIT_CODE -eq 0 ] && [ -n "$DNS_RESULT" ]; then
         echo ""
         
         # Save cluster IPs to cluster config
-        CLUSTER_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/cluster_config.sh"
+        CLUSTER_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh"
         if [ -f "$CLUSTER_CONFIG_FILE" ]; then
             # Check if CLUSTER_IPS is already in the file
             if ! grep -q "CLUSTER_IPS" "$CLUSTER_CONFIG_FILE"; then

@@ -35,17 +35,6 @@ else
 fi
 
 echo ""
-
-# Confirm deletion
-read -p "Are you sure you want to delete client '${CLIENT_NAME}'? [y/N]: " -n 1 -r
-echo ""
-
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "Deletion cancelled."
-    exit 0
-fi
-
-echo ""
 echo "Deleting client..."
 
 # Configure aerolab backend

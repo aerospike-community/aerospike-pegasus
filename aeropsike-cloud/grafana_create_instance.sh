@@ -49,7 +49,7 @@ if [ -n "$EXISTING_GRAFANA" ]; then
         echo ""
         
         # Save basic Grafana config (without Prometheus endpoints yet)
-        GRAFANA_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
+        GRAFANA_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh"
         mkdir -p "$(dirname "$GRAFANA_CONFIG_FILE")"
         cat > "${GRAFANA_CONFIG_FILE}" <<EOF
 export GRAFANA_NAME="${GRAFANA_NAME}"
@@ -137,7 +137,7 @@ echo "  Private IP: ${GRAFANA_PRIVATE_IP}"
 echo ""
 
 # Save Grafana configuration (without Prometheus endpoints - will be added later)
-GRAFANA_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_ID}/grafana_config.sh"
+GRAFANA_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh"
 mkdir -p "$(dirname "$GRAFANA_CONFIG_FILE")"
 
 cat > "${GRAFANA_CONFIG_FILE}" <<EOF
