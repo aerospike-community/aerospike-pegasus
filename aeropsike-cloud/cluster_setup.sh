@@ -149,6 +149,14 @@ EOF
         ACS_CLUSTER_HOSTNAME=$(acs_get_cluster_hostname "${ACS_CLUSTER_ID}")
         ACS_CLUSTER_TLSNAME=$(acs_get_cluster_tls_name "${ACS_CLUSTER_ID}")
         
+        # Get and save TLS certificate
+        echo "Downloading TLS certificate..."
+        ACS_CLUSTER_TLS_CERT=$(acs_get_cluster_tls_cert "${ACS_CLUSTER_ID}")
+        if [ -n "$ACS_CLUSTER_TLS_CERT" ] && [ "$ACS_CLUSTER_TLS_CERT" != "null" ]; then
+            echo "$ACS_CLUSTER_TLS_CERT" > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/ca.pem"
+            echo "✓ TLS certificate saved to ca.pem"
+        fi
+        
         # Create cluster config with full details
         cat > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh" <<EOF
 export ACS_CLUSTER_ID="${ACS_CLUSTER_ID}"
@@ -156,14 +164,14 @@ export ACS_CLUSTER_NAME="${ACS_CLUSTER_NAME}"
 export ACS_CLUSTER_STATUS="${ACS_CLUSTER_STATUS}"
 export ACS_CLUSTER_HOSTNAME="${ACS_CLUSTER_HOSTNAME}"
 export ACS_CLUSTER_TLSNAME="${ACS_CLUSTER_TLSNAME}"
-export SERVICE_PORT=4000
+export SERVICE_PORT=$(if [ "$ENABLE_TLS" == "false" ]; then echo "3000"; else echo "4000"; fi)
 EOF
         
         echo ""
         echo "Connection Details:"
         echo "  Hostname: ${ACS_CLUSTER_HOSTNAME}"
         echo "  TLS Name: ${ACS_CLUSTER_TLSNAME}"
-        echo "  Port: 4000"
+        echo "  Port: $(if [ "$ENABLE_TLS" == "false" ]; then echo "3000 (non-TLS)"; else echo "4000 (TLS)"; fi)"
         echo ""
         return 0  # Use return instead of exit when sourced
     elif [[ "${ACS_CLUSTER_STATUS}" == "provisioning" ]]; then
@@ -249,6 +257,15 @@ EOF
     
     if [ -n "$AEROSPIKE_VERSION" ]; then
         JSON_PAYLOAD=$(echo "$JSON_PAYLOAD" | jq ".dataPlaneVersion = \"${AEROSPIKE_VERSION}\"")
+    fi
+    
+    # Configure service port (TLS or non-TLS)
+    if [ "$ENABLE_TLS" == "false" ]; then
+        # Configure non-TLS service on port 3000
+        JSON_PAYLOAD=$(echo "$JSON_PAYLOAD" | jq '.aerospikeServer.network = {"service": {"port": 3000}}')
+    else
+        # Configure TLS service on port 4000
+        JSON_PAYLOAD=$(echo "$JSON_PAYLOAD" | jq '.aerospikeServer.network = {"service": {"tls-port": 4000}}')
     fi
     
     # Create the cluster
@@ -400,6 +417,14 @@ echo "====================================="
 ACS_CLUSTER_HOSTNAME=$(acs_get_cluster_hostname "${ACS_CLUSTER_ID}")
 ACS_CLUSTER_TLSNAME=$(acs_get_cluster_tls_name "${ACS_CLUSTER_ID}")
 
+# Get and save TLS certificate
+echo "Downloading TLS certificate..."
+ACS_CLUSTER_TLS_CERT=$(acs_get_cluster_tls_cert "${ACS_CLUSTER_ID}")
+if [ -n "$ACS_CLUSTER_TLS_CERT" ] && [ "$ACS_CLUSTER_TLS_CERT" != "null" ]; then
+    echo "$ACS_CLUSTER_TLS_CERT" > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/ca.pem"
+    echo "✓ TLS certificate saved to ca.pem"
+fi
+
 # Update cluster config file with full connection details
 cat > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh" <<EOF
 export ACS_CLUSTER_ID="${ACS_CLUSTER_ID}"
@@ -407,13 +432,13 @@ export ACS_CLUSTER_NAME="${ACS_CLUSTER_NAME}"
 export ACS_CLUSTER_STATUS="active"
 export ACS_CLUSTER_HOSTNAME="${ACS_CLUSTER_HOSTNAME}"
 export ACS_CLUSTER_TLSNAME="${ACS_CLUSTER_TLSNAME}"
-export SERVICE_PORT=4000
+export SERVICE_PORT=$(if [ "$ENABLE_TLS" == "false" ]; then echo "3000"; else echo "4000"; fi)
 EOF
 
 echo ""
 echo "Connection Details:"
 echo "  Hostname: ${ACS_CLUSTER_HOSTNAME}"
 echo "  TLS Name: ${ACS_CLUSTER_TLSNAME}"
-echo "  Port: 4000"
+echo "  Port: $(if [ "$ENABLE_TLS" == "false" ]; then echo "3000 (non-TLS)"; else echo "4000 (TLS)"; fi)"
 echo ""
 echo "Cluster setup complete!"
