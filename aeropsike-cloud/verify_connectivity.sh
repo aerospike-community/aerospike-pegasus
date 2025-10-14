@@ -46,7 +46,7 @@ echo ""
 # ============================================
 
 echo "Configuring aerolab backend..."
-aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
+aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" &>/dev/null
 
 echo ""
 echo "Connecting to client and testing DNS resolution..."

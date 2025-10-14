@@ -29,7 +29,7 @@ mkdir -p "${CLIENT_CONFIG_DIR}"
 
 # Check if client already exists
 echo "Checking if client '${CLIENT_NAME}' already exists..."
-CLIENT_EXISTS=$(aerolab client list -j 2>/dev/null | jq -r ".[] | select(.ClientName == \"${CLIENT_NAME}\") | .ClientName" | head -1)
+CLIENT_EXISTS=$(aerolab client list -j 2>/dev/null | jq -r "(. // []) | .[] | select(.ClientName == \"${CLIENT_NAME}\") | .ClientName" | head -1)
 
 if [ -n "$CLIENT_EXISTS" ]; then
     echo "✓ Client '${CLIENT_NAME}' already exists"
@@ -72,7 +72,7 @@ echo "====================================="
 echo ""
 
 # Get client details from aerolab
-CLIENT_INFO=$(aerolab client list -j 2>/dev/null | jq "[.[] | select(.ClientName == \"${CLIENT_NAME}\")]")
+CLIENT_INFO=$(aerolab client list -j 2>/dev/null | jq "[(. // []) | .[] | select(.ClientName == \"${CLIENT_NAME}\")]")
 
 if [ -z "$CLIENT_INFO" ] || [ "$CLIENT_INFO" == "[]" ]; then
     echo "ERROR: Failed to get client details from aerolab"

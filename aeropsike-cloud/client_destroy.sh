@@ -38,7 +38,7 @@ echo ""
 echo "Deleting client..."
 
 # Configure aerolab backend
-aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null || true
+aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" &>/dev/null || true
 
 # Destroy client using aerolab
 aerolab client destroy -n "${CLIENT_NAME}" -f

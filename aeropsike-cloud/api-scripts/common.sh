@@ -43,7 +43,8 @@ function acs_get_cluster_hostname() {
 
 function acs_get_cluster_tls_cert() {
   local cluster_id=$1
-  local cluster_tls_cert=$(acs_get_cluster_json "${cluster_id}" | jq -r '.connectionDetails.tlsCertificate')
+  # Fetch certificate directly via API to avoid jq parsing issues with newlines in certificates
+  local cluster_tls_cert=$(curl -s "${REST_API_URI}/${cluster_id}" -H "@${ACS_AUTH_HEADER}" | jq -r '.connectionDetails.tlsCertificate')
   echo "${cluster_tls_cert}"
 }
 

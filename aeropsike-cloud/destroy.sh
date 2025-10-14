@@ -36,7 +36,7 @@ fi
 # Then destroy Grafana (if exists)
 if [ -f "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/grafana_config.sh" ] || aerolab client list 2>/dev/null | grep -q "${GRAFANA_NAME}"; then
     echo "Grafana instance found, destroying..."
-    aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
+    aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" &>/dev/null
     if aerolab client destroy -n "${GRAFANA_NAME}" -f 2>/dev/null; then
         echo "✓ Grafana destroyed"
     else

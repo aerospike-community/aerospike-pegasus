@@ -164,14 +164,14 @@ export ACS_CLUSTER_NAME="${ACS_CLUSTER_NAME}"
 export ACS_CLUSTER_STATUS="${ACS_CLUSTER_STATUS}"
 export ACS_CLUSTER_HOSTNAME="${ACS_CLUSTER_HOSTNAME}"
 export ACS_CLUSTER_TLSNAME="${ACS_CLUSTER_TLSNAME}"
-export SERVICE_PORT=$(if [ "$ENABLE_TLS" == "false" ]; then echo "3000"; else echo "4000"; fi)
+export SERVICE_PORT=4000
 EOF
         
         echo ""
         echo "Connection Details:"
         echo "  Hostname: ${ACS_CLUSTER_HOSTNAME}"
         echo "  TLS Name: ${ACS_CLUSTER_TLSNAME}"
-        echo "  Port: $(if [ "$ENABLE_TLS" == "false" ]; then echo "3000 (non-TLS)"; else echo "4000 (TLS)"; fi)"
+        echo "  Port: 4000 (TLS)"
         echo ""
         return 0  # Use return instead of exit when sourced
     elif [[ "${ACS_CLUSTER_STATUS}" == "provisioning" ]]; then
@@ -259,14 +259,9 @@ EOF
         JSON_PAYLOAD=$(echo "$JSON_PAYLOAD" | jq ".dataPlaneVersion = \"${AEROSPIKE_VERSION}\"")
     fi
     
-    # Configure service port (TLS or non-TLS)
-    if [ "$ENABLE_TLS" == "false" ]; then
-        # Configure non-TLS service on port 3000
-        JSON_PAYLOAD=$(echo "$JSON_PAYLOAD" | jq '.aerospikeServer.network = {"service": {"port": 3000}}')
-    else
-        # Configure TLS service on port 4000
-        JSON_PAYLOAD=$(echo "$JSON_PAYLOAD" | jq '.aerospikeServer.network = {"service": {"tls-port": 4000}}')
-    fi
+    # Note: Network configuration (TLS/non-TLS ports) is managed by Aerospike Cloud
+    # and cannot be configured at cluster creation time. By default, clusters use
+    # TLS on port 4000. For non-TLS, you would need to update via the API after creation.
     
     # Create the cluster
     API_RESPONSE=$(mktemp)
@@ -432,13 +427,13 @@ export ACS_CLUSTER_NAME="${ACS_CLUSTER_NAME}"
 export ACS_CLUSTER_STATUS="active"
 export ACS_CLUSTER_HOSTNAME="${ACS_CLUSTER_HOSTNAME}"
 export ACS_CLUSTER_TLSNAME="${ACS_CLUSTER_TLSNAME}"
-export SERVICE_PORT=$(if [ "$ENABLE_TLS" == "false" ]; then echo "3000"; else echo "4000"; fi)
+export SERVICE_PORT=4000
 EOF
 
 echo ""
 echo "Connection Details:"
 echo "  Hostname: ${ACS_CLUSTER_HOSTNAME}"
 echo "  TLS Name: ${ACS_CLUSTER_TLSNAME}"
-echo "  Port: $(if [ "$ENABLE_TLS" == "false" ]; then echo "3000 (non-TLS)"; else echo "4000 (TLS)"; fi)"
+echo "  Port: 4000 (TLS)"
 echo ""
 echo "Cluster setup complete!"

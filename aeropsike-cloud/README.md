@@ -5,7 +5,7 @@ Automated setup for Aerospike Cloud clusters with client instances and Perseus b
 ## Prerequisites
 
 - **Aerospike Cloud API Key**: Download from [Aerospike Cloud Console](https://cloud.aerospike.com)
-- **aerolab**: Install from [Aerospike Labs](https://github.com/aerospike/aerolab)
+- **aerolab**: Install from [Github](https://github.com/aerospike/aerolab)
 - **AWS CLI**: Configured with credentials
 - **jq**: JSON processor (`brew install jq` on macOS)
 
@@ -22,11 +22,10 @@ CLUSTER_SIZE="2"                      # Number of nodes
 CLOUD_REGION="ap-south-1"            # AWS region
 INSTANCE_TYPE="i4i.large"            # Instance type
 
-# TLS Configuration
-ENABLE_TLS="true"                    # true = port 4000 (TLS), false = port 3000 (non-TLS)
-
 # Namespace
 NAMESPACE_NAME="test"
+
+# Note: Aerospike Cloud clusters use TLS by default on port 4000
 ```
 
 ### 2. Add API Key
@@ -49,9 +48,28 @@ This will:
 - Create the database cluster
 - Set up VPC peering
 - Create client instances
-- Build and run Perseus benchmarking tool
+- Build Perseus benchmarking tool (does not start it automatically)
 
 **Note**: Full setup takes 15-30 minutes.
+
+### 4. Run Perseus Benchmarking
+
+After setup completes, run Perseus:
+```bash
+cd ../client
+./runPerseus.sh
+```
+
+This will:
+- Upload TLS certificate to client instances
+- Configure Perseus with cluster connection details
+- Start Perseus benchmarking tool
+- Open terminal windows to monitor each client's output
+
+To rebuild Perseus (after code changes):
+```bash
+./buildPerseus.sh
+```
 
 ## Script Idempotency
 
@@ -81,7 +99,7 @@ All setup scripts are **idempotent** - you can safely run them multiple times:
 3. Continue with VPC peering setup
 4. Proceed with remaining components
 
-### 4. Individual Components
+### 5. Individual Components
 
 Run components separately if needed:
 
@@ -92,10 +110,14 @@ Run components separately if needed:
 # Setup VPC peering (after cluster is ready)
 ./vpc_peering_setup.sh
 
-# Setup client and run Perseus
+# Setup client instances
 cd ../client
 ./setup.sh
+
+# Build Perseus
 ./buildPerseus.sh
+
+# Run Perseus benchmarking
 ./runPerseus.sh
 ```
 
@@ -127,14 +149,56 @@ NUMERIC_INDEX=False
 
 ## Cleanup
 
-Destroy all resources:
+### Destroy All Resources
+
 ```bash
 cd aeropsike-cloud
-./destroy.sh
+./destroy.sh [cluster-name]
 ```
+
+**Options**:
+- `cluster-name` - (Optional) Specify a specific cluster to destroy. If omitted, destroys the cluster configured in `configure.sh`
 
 This removes:
 - Aerospike Cloud cluster
-- Client instances
+- Client instances  
 - Grafana instance
 - VPC peering connections
+
+**Example**:
+```bash
+# Destroy the configured cluster (interactive, with confirmation)
+./destroy.sh
+
+# Destroy a specific cluster
+./destroy.sh my-other-cluster
+```
+
+### Destroy Individual Components
+
+You can also destroy components separately:
+
+```bash
+# Destroy only the cluster (prompts for confirmation)
+./cluster_destroy.sh
+
+# Destroy cluster without confirmation
+./cluster_destroy.sh --yes
+
+# Destroy VPC peering
+./vpc_peering_destroy.sh
+
+# Destroy VPC peering without confirmation  
+./vpc_peering_destroy.sh --yes
+
+# Destroy client instances
+./client_destroy.sh
+
+# Destroy Grafana
+./grafana_destroy.sh
+```
+
+**Available Flags**:
+- `--yes` or `-y` - Skip confirmation prompts (useful for automation)
+
+**Note**: The main `destroy.sh` script automatically skips confirmations for sub-components. Confirmations are only shown when running individual destroy scripts directly.

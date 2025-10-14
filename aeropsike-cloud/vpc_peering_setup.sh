@@ -585,7 +585,7 @@ test_connectivity() {
     EXISTING_IPS=$(grep "^export CLUSTER_IPS=" "$CLUSTER_CONFIG_FILE" 2>/dev/null | cut -d'"' -f2)
     
     # Configure aerolab backend
-    aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
+    aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" &>/dev/null
     
     # Test DNS resolution via client (with retry logic for new setups)
     DNS_OUTPUT=""
@@ -632,7 +632,8 @@ test_connectivity() {
     
     if [ $EXIT_CODE -eq 0 ] && [ -n "$DNS_OUTPUT" ]; then
         # Extract IPs from output (use same pattern as verify_connectivity.sh)
-        CLUSTER_IPS=$(echo "$DNS_OUTPUT" | grep -E '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | tr '\n' ',' | sed 's/,$//')
+        # Strip carriage returns, newlines, and extra spaces
+        CLUSTER_IPS=$(echo "$DNS_OUTPUT" | grep -E '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | tr -d '\r' | tr '\n' ',' | sed 's/,$//' | tr -d ' ')
         
         if [ -n "$CLUSTER_IPS" ]; then
             IP_COUNT=$(echo "$DNS_OUTPUT" | grep -E '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | wc -l | tr -d ' ')
@@ -646,14 +647,17 @@ test_connectivity() {
             echo ""
             
             # Save cluster IPs to cluster config
+            # Ensure no carriage returns or other control characters in the value
+            CLEAN_CLUSTER_IPS=$(echo "$CLUSTER_IPS" | tr -d '\r\n' | tr -s ' ' | xargs)
             CLUSTER_CONFIG_FILE="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh"
             if ! grep -q "CLUSTER_IPS" "$CLUSTER_CONFIG_FILE" 2>/dev/null; then
-                echo "export CLUSTER_IPS=\"${CLUSTER_IPS}\"" >> "$CLUSTER_CONFIG_FILE"
+                echo "export CLUSTER_IPS=\"${CLEAN_CLUSTER_IPS}\"" >> "$CLUSTER_CONFIG_FILE"
                 log_success "Cluster IPs saved to config file"
             else
-                # Update existing line
-                sed -i.bak "s|export CLUSTER_IPS=.*|export CLUSTER_IPS=\"${CLUSTER_IPS}\"|" "$CLUSTER_CONFIG_FILE" 2>/dev/null || \
-                sed -i '' "s|export CLUSTER_IPS=.*|export CLUSTER_IPS=\"${CLUSTER_IPS}\"|" "$CLUSTER_CONFIG_FILE" 2>/dev/null
+                # Update existing line - remove old line and append new one to avoid sed issues with special chars
+                grep -v "^export CLUSTER_IPS=" "$CLUSTER_CONFIG_FILE" > "$CLUSTER_CONFIG_FILE.tmp"
+                echo "export CLUSTER_IPS=\"${CLEAN_CLUSTER_IPS}\"" >> "$CLUSTER_CONFIG_FILE.tmp"
+                mv "$CLUSTER_CONFIG_FILE.tmp" "$CLUSTER_CONFIG_FILE"
                 log_success "Cluster IPs updated in config file"
             fi
             

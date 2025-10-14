@@ -76,14 +76,18 @@ echo ""
 echo "Configuring Prometheus to scrape cluster..."
 echo ""
 
-# Build scrape targets as a YAML array
+# Build scrape targets as a YAML array (no quotes, no spaces after commas)
 SCRAPE_TARGETS=""
+# Strip any carriage returns and whitespace from CLUSTER_IPS
+CLUSTER_IPS=$(echo "$CLUSTER_IPS" | tr -d '\r' | tr -d ' ')
 IFS=',' read -ra IPS <<< "$CLUSTER_IPS"
 for ip in "${IPS[@]}"; do
+    # Trim any remaining whitespace from IP
+    ip=$(echo "$ip" | xargs)
     if [ -z "$SCRAPE_TARGETS" ]; then
         SCRAPE_TARGETS="${ip}:${PROMETHEUS_PORT}"
     else
-        SCRAPE_TARGETS="${SCRAPE_TARGETS}, ${ip}:${PROMETHEUS_PORT}"
+        SCRAPE_TARGETS="${SCRAPE_TARGETS},${ip}:${PROMETHEUS_PORT}"
     fi
 done
 
@@ -94,7 +98,7 @@ SCRAPE_CONFIG="  - job_name: aerospike-cloud
 
 # Check if config already exists
 echo "Checking existing Prometheus configuration..."
-aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
+aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" &>/dev/null
 EXISTING_JOB=$(aerolab client attach -n "${GRAFANA_NAME}" -l 1 -- "grep -A 2 'job_name: aerospike-cloud' /etc/prometheus/prometheus.yml" 2>/dev/null)
 
 if [ -n "$EXISTING_JOB" ]; then
@@ -111,7 +115,9 @@ if [ $? -ne 0 ]; then
     echo ""
     echo "You can manually add this to /etc/prometheus/prometheus.yml on the Grafana instance:"
     echo "${SCRAPE_CONFIG}"
-    exit 1
+    echo ""
+    echo "Continuing anyway..."
+    return 1 2>/dev/null || exit 1
 fi
 
 # Restart Prometheus to apply changes
@@ -121,7 +127,7 @@ aerolab client attach -n "${GRAFANA_NAME}" -l 1 -- "sudo systemctl restart prome
 if [ $? -ne 0 ]; then
     echo "⚠️  WARNING: Failed to restart Prometheus"
     echo "You may need to manually restart it: sudo systemctl restart prometheus"
-    exit 1
+    return 1 2>/dev/null || exit 1
 fi
 
 echo "✓ Prometheus configured successfully"

@@ -36,7 +36,8 @@ DATA_RESILIENCY=""  # Optional: local-disk, network-storage (for in-memory or lo
 
 # Aerospike Server Config
 AEROSPIKE_VERSION=""  # Optional: specific version, leave empty for latest
-ENABLE_TLS="true"  # true = use TLS (port 4000), false = no TLS (port 3000)
+# Note: Aerospike Cloud uses TLS by default on port 4000. Non-TLS configuration
+# requires additional API calls after cluster creation (not currently supported)
 
 # Namespace Config
 NAMESPACE_NAME="test"

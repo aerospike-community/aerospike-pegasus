@@ -55,16 +55,16 @@ echo ""
 echo "Checking if Grafana '${GRAFANA_NAME}' already exists..."
 
 # Configure aerolab backend
-aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
+aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" &>/dev/null
 
-EXISTING_GRAFANA=$(aerolab client list -j 2>/dev/null | jq -r ".[] | select(.ClientName == \"${GRAFANA_NAME}\") | .ClientName" | head -1)
+EXISTING_GRAFANA=$(aerolab client list -j 2>/dev/null | jq -r "(. // []) | .[] | select(.ClientName == \"${GRAFANA_NAME}\") | .ClientName" | head -1)
 
 if [ -n "$EXISTING_GRAFANA" ]; then
     echo "✓ Grafana instance '${GRAFANA_NAME}' already exists"
     echo ""
     
     # Get Grafana details
-    GRAFANA_INFO=$(aerolab client list -j 2>/dev/null | jq ".[] | select(.ClientName == \"${GRAFANA_NAME}\")")
+    GRAFANA_INFO=$(aerolab client list -j 2>/dev/null | jq "(. // []) | .[] | select(.ClientName == \"${GRAFANA_NAME}\")")
     GRAFANA_IP=$(echo "$GRAFANA_INFO" | jq -r '.PublicIp')
     GRAFANA_INSTANCE_ID=$(echo "$GRAFANA_INFO" | jq -r '.InstanceId')
     

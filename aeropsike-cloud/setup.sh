@@ -130,7 +130,7 @@ validate_state() {
                 CLUSTER_IPS=""
                 if [ -f "${CLIENT_CONFIG_DIR}/client_config.sh" ] && [[ "$VPC_PEERING_PHASE" == "complete" ]]; then
                     source "${CLIENT_CONFIG_DIR}/client_config.sh"
-                    aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
+                    aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" &>/dev/null
                     DNS_OUTPUT=$(aerolab client attach -n "${CLIENT_NAME}" -l 1 -- "dig +short ${ACS_CLUSTER_HOSTNAME}" 2>&1)
                     CLUSTER_IPS=$(echo "$DNS_OUTPUT" | grep -E '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | tr '\n' ',' | sed 's/,$//')
                 fi
@@ -181,9 +181,9 @@ EOF
         echo "  Checking client '${CLIENT_NAME}'..."
         
         # Configure aerolab backend first
-        aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
+        aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" &>/dev/null
         
-        CLIENT_EXISTS=$(aerolab client list -j 2>/dev/null | jq -r ".[] | select(.ClientName == \"${CLIENT_NAME}\") | .ClientName" | head -1)
+        CLIENT_EXISTS=$(aerolab client list -j 2>/dev/null | jq -r "(. // []) | .[] | select(.ClientName == \"${CLIENT_NAME}\") | .ClientName" | head -1)
         
         if [ -z "$CLIENT_EXISTS" ]; then
             echo "     ⚠️  Client not found in aerolab (may be deleted)"
@@ -241,9 +241,9 @@ EOF
     echo "  Checking Grafana '${GRAFANA_NAME}'..."
     
     # Configure aerolab backend
-    aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
+    aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" &>/dev/null
     
-    GRAFANA_EXISTS=$(aerolab client list -j 2>/dev/null | jq -r ".[] | select(.ClientName == \"${GRAFANA_NAME}\") | .ClientName" | head -1)
+    GRAFANA_EXISTS=$(aerolab client list -j 2>/dev/null | jq -r "(. // []) | .[] | select(.ClientName == \"${GRAFANA_NAME}\") | .ClientName" | head -1)
     
     if [ -z "$GRAFANA_EXISTS" ]; then
         # Grafana doesn't exist
@@ -266,7 +266,7 @@ EOF
             echo "     ⚠️  Config file missing, extracting Grafana details..."
             
             # Extract Grafana details from aerolab
-            GRAFANA_DETAILS=$(aerolab client list -j 2>/dev/null | jq -r ".[] | select(.ClientName == \"${GRAFANA_NAME}\")")
+            GRAFANA_DETAILS=$(aerolab client list -j 2>/dev/null | jq -r "(. // []) | .[] | select(.ClientName == \"${GRAFANA_NAME}\")")
             
             if [ -n "$GRAFANA_DETAILS" ]; then
                 GRAFANA_IP=$(echo "$GRAFANA_DETAILS" | jq -r '.PublicIp')
@@ -301,7 +301,7 @@ EOF
                 echo "     ⚠️  Config file missing, extracting Grafana details..."
                 
                 # Extract Grafana details from aerolab
-                GRAFANA_DETAILS=$(aerolab client list -j 2>/dev/null | jq -r ".[] | select(.ClientName == \"${GRAFANA_NAME}\")")
+                GRAFANA_DETAILS=$(aerolab client list -j 2>/dev/null | jq -r "(. // []) | .[] | select(.ClientName == \"${GRAFANA_NAME}\")")
                 
                 if [ -n "$GRAFANA_DETAILS" ]; then
                     GRAFANA_IP=$(echo "$GRAFANA_DETAILS" | jq -r '.PublicIp')
@@ -409,7 +409,7 @@ EOF
         echo "  Checking Perseus build status..."
         
         # Configure aerolab backend
-        aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
+        aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" &>/dev/null
         
         # Check if Perseus jar exists on client
         PERSEUS_JAR_EXISTS=$(aerolab client attach -n "${CLIENT_NAME}" -l 1 -- "test -f /root/aerospike-perseus/target/perseus-1.0-SNAPSHOT-jar-with-dependencies.jar && echo 'true' || echo 'false'" 2>/dev/null | tr -d '\r\n')
@@ -566,7 +566,7 @@ run_cluster_setup() {
     
     # Source cluster setup but modify to not wait for provisioning
     export SKIP_PROVISION_WAIT="true"
-. $PREFIX/cluster_setup.sh
+    . $PREFIX/cluster_setup.sh
     
     # Check if cluster is now provisioning or active
     if [ -f "${ACS_CONFIG_DIR}/current_cluster.sh" ]; then
@@ -602,7 +602,7 @@ run_client_setup() {
     
     # Run client setup (use 'set +e' to prevent exit on error)
     set +e
-. $PREFIX/client_setup.sh
+    . $PREFIX/client_setup.sh
     CLIENT_SETUP_EXIT_CODE=$?
     set -e
     
@@ -677,6 +677,16 @@ wait_for_cluster_active() {
             . $PREFIX/api-scripts/common.sh
             ACS_CLUSTER_HOSTNAME=$(acs_get_cluster_hostname "${ACS_CLUSTER_ID}" 2>/dev/null)
             ACS_CLUSTER_TLSNAME=$(acs_get_cluster_tls_name "${ACS_CLUSTER_ID}" 2>/dev/null)
+            
+            # Get and save TLS certificate
+            echo "Downloading TLS certificate..."
+            ACS_CLUSTER_TLS_CERT=$(acs_get_cluster_tls_cert "${ACS_CLUSTER_ID}" 2>/dev/null)
+            if [ -n "$ACS_CLUSTER_TLS_CERT" ] && [ "$ACS_CLUSTER_TLS_CERT" != "null" ]; then
+                echo "$ACS_CLUSTER_TLS_CERT" > "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/ca.pem"
+                echo "✓ TLS certificate saved to ca.pem"
+            else
+                echo "⚠️  Could not retrieve TLS certificate from API"
+            fi
             
             if [ -n "$ACS_CLUSTER_HOSTNAME" ]; then
                 # Update cluster config file with connection details
@@ -796,8 +806,20 @@ run_prometheus_config() {
         fi
     fi
     
-    # Run Prometheus configuration
+    # Run Prometheus configuration (use 'set +e' to prevent exit on error)
+    set +e
     . $PREFIX/prometheus_configure.sh
+    PROM_EXIT_CODE=$?
+    set -e
+    
+    if [ $PROM_EXIT_CODE -ne 0 ]; then
+        echo ""
+        echo "⚠️  Prometheus configuration encountered an issue (exit code: $PROM_EXIT_CODE)"
+        echo "You can retry with: ./prometheus_configure.sh"
+        echo "Setup will continue with remaining tasks..."
+        echo ""
+        return 0  # Don't fail the entire setup, just skip marking as complete
+    fi
     
     PROMETHEUS_CONFIG_PHASE="complete"
     save_state
@@ -818,7 +840,7 @@ run_perseus_build() {
     fi
     
     # Check if Perseus is already built
-    aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
+    aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" &>/dev/null
     PERSEUS_JAR_EXISTS=$(aerolab client attach -n "${CLIENT_NAME}" -l 1 -- "test -f /root/aerospike-perseus/target/perseus-1.0-SNAPSHOT-jar-with-dependencies.jar && echo 'true' || echo 'false'" 2>/dev/null | tr -d '\r\n')
     
     if [ "${PERSEUS_JAR_EXISTS}" == "true" ]; then
