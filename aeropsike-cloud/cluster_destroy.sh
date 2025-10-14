@@ -29,8 +29,13 @@ if [ ! -f "${ACS_CONFIG_DIR}/current_cluster.sh" ]; then
     ACS_CLUSTER_ID=$(acs_get_cluster_id "${ACS_CLUSTER_NAME}" 2>/dev/null)
     
     if [ -z "$ACS_CLUSTER_ID" ]; then
-        echo "ERROR: No cluster found with name '${ACS_CLUSTER_NAME}'"
-        exit 1
+        echo "⚠️  No cluster found with name '${ACS_CLUSTER_NAME}' (may already be deleted)"
+        # Clean up any leftover local files
+        if [ -d "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}" ]; then
+            rm -rf "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}"
+            echo "✓ Cleaned up local configuration files"
+        fi
+        return 0
     fi
     
     echo "Found cluster ID: ${ACS_CLUSTER_ID}"
@@ -101,7 +106,7 @@ if [[ "${HTTP_CODE}" -eq "202" ]] || [[ "${HTTP_CODE}" -eq "204" ]]; then
     
 else
     echo ""
-    echo "ERROR: Failed to delete cluster!"
+    echo "⚠️  Failed to delete cluster!"
     echo "HTTP Response Code: ${HTTP_CODE}"
     
     # Try to get error details
@@ -115,5 +120,21 @@ else
         echo "$ERROR_RESPONSE" | jq '.' 2>/dev/null || echo "$ERROR_RESPONSE"
     fi
     
-    exit 1
+    # Clean up local files even if API call failed
+    echo ""
+    echo "Cleaning up local configuration files..."
+    if [ -f "${ACS_CONFIG_DIR}/current_cluster.sh" ]; then
+        source "${ACS_CONFIG_DIR}/current_cluster.sh"
+        if [ "${ACS_CLUSTER_NAME}" == "$(basename $(dirname ${CLIENT_CONFIG_DIR}))" ]; then
+            rm -f "${ACS_CONFIG_DIR}/current_cluster.sh"
+            echo "✓ Removed ${ACS_CONFIG_DIR}/current_cluster.sh"
+        fi
+    fi
+    
+    if [ -d "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}" ]; then
+        rm -rf "${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}"
+        echo "✓ Removed ${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/"
+    fi
+    
+    return 1
 fi

@@ -36,7 +36,7 @@ DATA_RESILIENCY=""  # Optional: local-disk, network-storage (for in-memory or lo
 
 # Aerospike Server Config
 AEROSPIKE_VERSION=""  # Optional: specific version, leave empty for latest
-ENABLE_TLS="false"  # true = use TLS (port 4000), false = no TLS (port 3000)
+ENABLE_TLS="true"  # true = use TLS (port 4000), false = no TLS (port 3000)
 
 # Namespace Config
 NAMESPACE_NAME="test"

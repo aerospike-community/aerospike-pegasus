@@ -20,8 +20,8 @@ if [ ! -f "${CLIENT_CONFIG_DIR}/client_config.sh" ]; then
     CLIENT_EXISTS=$(aerolab client list 2>/dev/null | grep -w "${CLIENT_NAME}" || true)
     
     if [ -z "$CLIENT_EXISTS" ]; then
-        echo "ERROR: No client found with name '${CLIENT_NAME}'"
-        exit 1
+        echo "⚠️  No client found with name '${CLIENT_NAME}' (may already be deleted)"
+        return 0
     fi
     
     echo "Found client: ${CLIENT_NAME}"
@@ -66,7 +66,7 @@ if [ $? -eq 0 ]; then
     
 else
     echo ""
-    echo "ERROR: Failed to destroy client!"
+    echo "⚠️  Failed to destroy client!"
     echo "You may need to manually clean up resources in AWS console."
-    exit 1
+    return 1
 fi

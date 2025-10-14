@@ -15,8 +15,8 @@ echo ""
 
 # Check if cluster exists
 if [ ! -f "${ACS_CONFIG_DIR}/current_cluster.sh" ]; then
-    echo "ERROR: No cluster found!"
-    exit 1
+    echo "⚠️  No cluster found in tracker (may already be deleted)"
+    return 0
 fi
 
 source "${ACS_CONFIG_DIR}/current_cluster.sh"
@@ -33,7 +33,7 @@ if [ ! -f "$VPC_PEERING_CONFIG" ]; then
     
     if [[ "$PEERING_COUNT" -eq 0 ]]; then
         echo "No VPC peering found for cluster ${ACS_CLUSTER_NAME}"
-        exit 0
+        return 0
     fi
     
     # Extract details from API response
@@ -63,7 +63,7 @@ if [[ "$1" != "--yes" ]] && [[ "$1" != "-y" ]]; then
     
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         echo "Deletion cancelled."
-        exit 0
+        return 0
     fi
 fi
 
