@@ -5,24 +5,15 @@ if [ -z "$PREFIX" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     PREFIX="${SCRIPT_DIR}/../aeropsike-cloud"
     . $PREFIX/configure.sh
+else
+    # When sourced from setup.sh, compute SCRIPT_DIR relative to PREFIX
+    SCRIPT_DIR="${PREFIX}/../client"
 fi
 
 echo "Uploading Perseus Configuration"
 
 # Configure aerolab backend
-aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" 2>/dev/null
-
-# Upload TLS certificate if it exists
-CLUSTER_CONFIG="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/cluster_config.sh"
-TLS_CERT_PATH="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/ca.pem"
-if [ -f "$TLS_CERT_PATH" ]; then
-    echo "Uploading TLS certificate..."
-    aerolab files upload -c -n ${CLIENT_NAME} "$TLS_CERT_PATH" /root/ca.pem || exit 1
-    aerolab files upload -c -n ${CLIENT_NAME} "${SCRIPT_DIR}/templates/setup_tls.sh" /root/setup_tls.sh || exit 1
-    aerolab client attach -n ${CLIENT_NAME} -l all --parallel -- bash /root/setup_tls.sh
-fi
-
-aerolab files upload -c -n ${CLIENT_NAME} "${SCRIPT_DIR}/templates/perseus.sh" /root/perseus.sh || exit 1
+aerolab config backend -t aws -r "${CLIENT_AWS_REGION}" &>/dev/null
 
 # Get cluster configuration from Aerospike Cloud
 if [ -f "${ACS_CONFIG_DIR}/current_cluster.sh" ]; then
@@ -33,20 +24,29 @@ if [ -f "${ACS_CONFIG_DIR}/current_cluster.sh" ]; then
     if [ -f "$CLUSTER_CONFIG" ]; then
         source "$CLUSTER_CONFIG"
         
-        # For TLS connections (port 4000), use the hostname
-        # For non-TLS connections (port 3000), use the IP
-        if [ "$SERVICE_PORT" == "4000" ]; then
-            nip="${ACS_CLUSTER_HOSTNAME}"
-            echo "Using cluster hostname (TLS): ${nip}"
+        # Upload TLS certificate if it exists
+        TLS_CERT_PATH="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/ca.pem"
+        if [ -f "$TLS_CERT_PATH" ]; then
+            echo "Uploading TLS certificate..."
+            aerolab files upload -c -n ${CLIENT_NAME} "$TLS_CERT_PATH" /root/ca.pem || exit 1
+            aerolab files upload -c -n ${CLIENT_NAME} "${SCRIPT_DIR}/templates/setup_tls.sh" /root/setup_tls.sh || exit 1
+            aerolab client attach -n ${CLIENT_NAME} -l all --parallel -- bash /root/setup_tls.sh
         else
-            # Use first IP from CLUSTER_IPS for non-TLS
-            nip=$(echo "$CLUSTER_IPS" | cut -d',' -f1)
-            echo "Using cluster IP (non-TLS): ${nip}"
+            echo "⚠️  WARNING: TLS certificate not found at: $TLS_CERT_PATH"
+            echo "Perseus may fail to connect without TLS certificate."
         fi
+        
+        # Aerospike Cloud uses TLS by default on port 4000
+        # Always use the hostname for TLS connections
+        nip="${ACS_CLUSTER_HOSTNAME}"
+        echo "Using cluster hostname (TLS): ${nip}"
     else
         echo "❌ ERROR: Cluster configuration not found!"
         exit 1
     fi
+    
+    # Upload Perseus script
+    aerolab files upload -c -n ${CLIENT_NAME} "${SCRIPT_DIR}/templates/perseus.sh" /root/perseus.sh || exit 1
     
     # Load database user credentials
     DB_USER_CONFIG="${ACS_CONFIG_DIR}/${ACS_CLUSTER_NAME}/${ACS_CLUSTER_ID}/db_user.sh"
@@ -99,13 +99,12 @@ for (( i=1; i  <= ${CLIENT_NUMBER_OF_NODES}; i++ ))
 echo "Running Perseus"
 aerolab client attach -n ${CLIENT_NAME} -l all --detach --parallel -- bash /root/perseus.sh
 
-sleep 5
-
+echo ""
+echo "✓ Perseus started on all client nodes"
+echo ""
+echo "To view logs, run:"
 for (( i=1; i  <= ${CLIENT_NUMBER_OF_NODES}; i++ ))
   do
-    echo ". \"${PREFIX}\"/configure.sh\naerolab client attach -n \"${CLIENT_NAME}\" -l \"${i}\" -- tail -f out.log" > "term"${i}".sh"
-    chmod 744 "term"${i}".sh"
-    open -a iTerm "term"${i}".sh"
-    sleep 3
-    rm -f "term"${i}".sh"
+    echo "  Node ${i}: aerolab client attach -n ${CLIENT_NAME} -l ${i} -- tail -f /root/out.log"
   done
+echo ""
