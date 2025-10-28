@@ -6,7 +6,7 @@ echo "Grow the cluster"
 aerolab cluster grow -n ${CLUSTER_NAME} -v ${VER} -o aerospike.conf --instance-type ${CLUSTER_INSTANCE_TYPE} --ebs=20 --start=n || exit 1
 rm -rf aerospike.conf
 
-New_Node_Number=$(aerolab cluster list -i | grep "cluster="${CLUSTER_NAME}" "| wc -l  | xargs)
+New_Node_Number=$(aerolab cluster list -j | jq -c '.[] | select(.ClusterName == '\"${CLUSTER_NAME}\"')' | wc -l)
 
 echo "Configure NVMe disks"
 OVERPROVISIONING=$(expr 100 - $OVERPROVISIONING_PERCENTAGE)
