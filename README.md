@@ -29,7 +29,10 @@ Pegasus relies on AeroLab to manage Aerospike clusters.
 To launch clusters on AWS, you’ll need the AWS CLI installed and configured.
 ➡️ [Follow these instructions](https://github.com/aerospike/aerolab/blob/master/docs/aws-setup.md#using-aws-cli)
 
-### 3. Aerospike Enterprise License
+### 3. jq
+[jq](https://stedolan.github.io/jq/) is a lightweight and powerful command-line tool for processing, filtering, and transforming JSON data, which Pegasus uses to parse AeroLab's JSON output in its scripts.
+
+### 4. Aerospike Enterprise License
 Pegasus assumes access to an Aerospike Enterprise Edition license.
 
 - If you don’t have one, you can request a free 60-day trial here:
