@@ -1,7 +1,8 @@
 echo "Uploading Perseus Configuration"
 aerolab files upload -c -n ${CLIENT_NAME} $PREFIX"/../client/templates/perseus.sh" /root/perseus.sh || exit 1
 
-nip=$(aerolab cluster list -i |grep -A7 ${CLUSTER_NAME} | head -1 | grep -E -o 'int_ip=.{0,15}' | egrep -o '([0-9]{1,3}\.){3}[0-9]{1,3}' )
+nip=$(aerolab cluster list -j | jq -c '.[] | select((.ClusterName == '\"${CLUSTER_NAME}\"') and (.NodeNo == "1")) | .PrivateIp')
+
 
 for (( i=1; i  <= ${CLIENT_NUMBER_OF_NODES}; i++ ))
   do
